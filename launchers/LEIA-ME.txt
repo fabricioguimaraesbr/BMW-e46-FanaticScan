@@ -1,0 +1,58 @@
+E46Fanatics Scan - diagnostico do BMW E46 pelo navegador
+=========================================================
+
+Le a identificacao dos modulos, le e apaga erros, mostra dados em tempo real.
+Abre em modo SOMENTE LEITURA: nada e gravado no carro.
+Testes de atuador e resets ficam travados ate voce destravar.
+Codificacao/programacao nao existe neste programa.
+
+O QUE TEM NESTA PASTA
+---------------------
+Abrir no Windows.bat ................ abre o programa (Windows)
+Criar atalho na Area de Trabalho.bat  cria o icone "E46Fanatics Scan" (rode uma vez)
+Abrir no Mac.command ................ abre o programa (Mac)
+modulos\ ............................ arquivos dos modulos (veja abaixo)
+app\ ................................ o programa em si (nao mexa)
+
+PRECISA DE
+----------
+1. Google Chrome ou Microsoft Edge (Windows ou Mac). Safari e Firefox nao funcionam com o cabo.
+2. Cabo K+DCAN (ou cabo FTDI do BMW Scanner 1.4).
+   No E46 o cabo precisa estar no modo K-line: chave do cabo na posicao certa,
+   ou ponte entre os pinos 7 e 8 (depende do modelo do cabo).
+3. Driver do cabo:
+   - Windows: normalmente o proprio Windows instala (o cabo aparece como "USB Serial Port (COMx)"
+     no Gerenciador de Dispositivos). Se o INPA ja funciona nesse PC, esta tudo certo.
+     Se aparecer como dispositivo desconhecido: instale o driver VCP da FTDI (ftdichip.com).
+     Cabos com chip CH340 precisam do driver CH340.
+   - Mac (inclusive M1/M2): o macOS ja reconhece cabos FTDI. Cabos CH340 podem precisar de driver.
+
+PASTA "modulos"
+---------------
+- Vazia: modo plug & play. O programa identifica todos os modulos e le o MOTOR pelo OBD-II:
+  codigos de erro padrao com descricao, apagar erros e dados em tempo real.
+- Com os arquivos dos modulos (.prg e .grp): le erros, dados e testes de cada modulo que
+  tiver o seu arquivo. Modulo sem arquivo continua funcionando em plug & play.
+- Os arquivos sao carregados quando o programa e aberto por "Abrir no Windows" / "Abrir no Mac"
+  (ou pelo atalho). Abrindo o .html direto, a pasta "modulos" nao e lida.
+
+COMO ABRIR
+----------
+Windows: dois cliques em "Criar atalho na Area de Trabalho.bat" (uma vez), depois use o icone.
+Mac: botao direito em "Abrir no Mac.command" > Abrir (so na primeira vez). Depois, dois cliques.
+
+NO CARRO
+--------
+1. Feche o INPA, o BMW Scanner ou outro programa que use o cabo.
+2. Cabo na porta OBD, chave na posicao 2 (ou motor ligado).
+3. "Connect cable" e escolha a porta do cabo na janela do Chrome.
+4. Indicadores no topo: "Cable" verde = cabo ok. "Car" verde = carro respondendo.
+   "Car not responding" = ignicao desligada ou cabo fora do modo K-line.
+5. Deixe terminar o "Checking supported data" na tela inicial: o programa descobre
+   o que o seu carro tem e esconde o resto.
+
+VERSAO DE TESTE
+---------------
+O OBD-II na linha K e lento por natureza: no modo plug & play os valores do motor
+atualizam cerca de 1 vez por segundo.
+Se algo nao funcionar, abra "Communication log" (rodape) e envie o conteudo.
