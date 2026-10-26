@@ -138,7 +138,8 @@ Os atalhos rodam `app/montar.ps1` ou `app/montar.pl`. Eles geram `app/E46Fanatic
 - **Desenvolvimento:** `npm install`, depois `npm run dev`. Use o Chrome. "Use simulator" funciona sem carro.
 - **Testes:** `ECU_DIR=C:\EDIABAS\Ecu npm test`. No Mac/Linux, use o caminho de uma cópia da pasta.
 - **Pacote:** `npx tsx scripts/build-offline.ts`, depois compacte `release/E46Fanatics Scan`.
-- **No Windows sem saber Node:** `Iniciar.bat` instala as dependências e abre o modo de desenvolvimento.
+- **Para usar (Windows e Mac):** o pacote "dois cliques" roda tudo embarcado, só com o Chrome/Edge; não precisa de Node.js. O antigo `Iniciar.bat` (modo de desenvolvimento com Node) foi removido em 26/10/2026.
+- **Repositório:** github.com/fabricioguimaraesbr/BMW-e46-FanaticScan (privado), ramo `main`. A pasta `pacote/` (zip gerado) fica fora do git.
 
 ## 8. Licença e origem
 

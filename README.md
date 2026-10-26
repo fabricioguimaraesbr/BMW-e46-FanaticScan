@@ -34,23 +34,17 @@ Navegador ─ Web Serial ─ cabo FTDI ─ linha K (DS2, 9600 8E1) ─ módulos 
                Interface web
 ```
 
-O código do INPA, do EDIABAS e do BMW Scanner não foi copiado. Os arquivos `.prg` são lidos da **sua** instalação e ficam guardados só no navegador do seu computador; nada é enviado para servidor nenhum.
+O código do INPA, do EDIABAS e do BMW Scanner não foi copiado. Os arquivos `.prg`/`.grp` vêm da pasta `modulos` do pacote, ao lado do programa; nada é enviado para servidor nenhum.
 
-## Rodar no computador
+## Usar o programa
 
-Requisitos: [Node.js](https://nodejs.org) 20 ou superior e o Chrome ou Edge.
+Quem vai usar o programa (Windows ou Mac, inclusive M1) **não precisa instalar nada além do Chrome ou Edge**: tudo vai embarcado no pacote "dois cliques" (seção mais abaixo). Não precisa de Node.js.
 
-No Windows, dê dois cliques em **Iniciar.bat**. Ele instala o que falta na primeira vez e abre o programa no navegador. Ou, pelo terminal:
+1. Extraia o `E46Fanatics Scan.zip`.
+2. Windows: rode `Criar atalho na Area de Trabalho.bat` uma vez e use o ícone (ou `Abrir no Windows.bat`). Mac: botão direito em `Abrir no Mac.command` > Abrir (só na primeira vez).
+3. **Connect cable** e escolha a porta FTDI na janela do Chrome. Ou **Use simulator** para testar sem o carro.
 
-```bash
-npm install
-npm run dev
-```
-
-Abra o endereço mostrado (`http://localhost:5173`) **no Chrome ou Edge**. O Safari e o Firefox não têm Web Serial; neles só o simulador funciona.
-
-1. **Conectar cabo**, depois escolha a porta FTDI na janela do Chrome.
-2. Ou **Usar simulador** para testar sem o carro.
+O Safari e o Firefox não têm Web Serial; neles só o simulador funciona.
 
 ### Cabo
 
@@ -108,6 +102,17 @@ Funções desconhecidas são tratadas como escrita (bloqueadas).
 
 Depois do scan, o programa lê a configuração de equipamentos da DME (`ECU_CONFIG`, `ABGAS_VARIANTE_LESEN`) e testa cada grupo de valores uma vez (só leitura). Grupos não suportados, valores de equipamentos que o carro não tem (ar secundário, válvula de escape, sondas pós-catalisador, diagnóstico de vazamento do tanque, etc.) e funções desses equipamentos ficam escondidos. O resultado fica guardado; "Re-check supported data" refaz a verificação.
 
+## Desenvolvimento
+
+Só para quem mexe no código: requer [Node.js](https://nodejs.org) 20 ou superior.
+
+```bash
+npm install
+npm run dev
+```
+
+Abre em `http://localhost:5173` (Chrome ou Edge para o cabo). Para gerar o pacote que vai para os usuários, veja "Pacote dois cliques".
+
 ## Testes
 
 ```bash
@@ -136,7 +141,7 @@ Os testes rodam o fluxo completo (interpretador + camada do cabo + carro simulad
 
 ## Limitações conhecidas
 
-- **Ainda não foi testado no carro.** Tudo foi validado contra o simulador, que foi construído a partir dos formatos que os próprios arquivos `.prg` esperam e dos seus logs. Os tempos reais do cabo podem pedir ajuste (`extraTimeout` em `ObdInterface`). Se algo falhar, abra a aba **Comunicação** na parte de baixo da tela e me envie o que aparecer.
+- **Ainda não foi testado no carro.** Tudo foi validado contra o simulador, que foi construído a partir dos formatos que os próprios arquivos `.prg` esperam e dos seus logs. Os tempos reais do cabo podem pedir ajuste (`extraTimeout` em `ObdInterface`). Se algo falhar, abra a página **Log** no menu lateral e envie o que aparecer (botão "Save log").
 - Só o conceito DS2 (6) está implementado. Isso cobre 58 dos 59 arquivos da sua pasta. O `MRS5` (airbag mais novo, KWP2000 a 115200) fica para depois.
 - A interface é em inglês. Erros, funções e valores da DME, do câmbio e do ABS foram traduzidos do alemão (`src/core/api/i18n-en.ts` e `i18n-jobs.ts`); nos outros módulos a tradução é aproximada (glossário), e o texto original em alemão aparece no detalhe do erro.
 - As telas do INPA (`.IPO`) não são executadas; as telas equivalentes foram refeitas a partir dos jobs.
