@@ -1,0 +1,240 @@
+# E46Fanatics Scan: arquivos de modulos usados pelo BMW E46 (qualquer motor e versao).
+# Ao juntar a pasta "modulos" ao programa, so os arquivos desta lista sao incluidos;
+# os outros (de outros modelos BMW) sao ignorados. Apague este arquivo para incluir tudo.
+# Lista de nomes apenas: nenhum arquivo da BMW faz parte do programa.
+
+# D_0000: Conforto ZKE/GM5
+d_0000.grp
+zke5.prg
+zke5_s12.prg
+
+# D_0008: Teto solar
+d_0008.grp
+sd_ds2.prg
+shd46.prg
+shd46_2.prg
+
+# D_0012: Motor (DME/DDE)
+d_0012.grp
+bms43ds0.prg
+bms46ds0.prg
+bms46ds1.prg
+d40m57a1.prg
+d50m47a.prg
+d50m47b1.prg
+d50m57a1.prg
+d50m57b1.prg
+dde40kw0.prg
+dde41kr0.prg
+dde50k47.prg
+me9_4n.prg
+me9k42.prg
+me9k_5.prg
+me9k_6.prg
+me9k_ng4.prg
+mev9n46.prg
+ms420ds0.prg
+ms430ds0.prg
+ms450ds0.prg
+mss54ds0.prg
+t_grtb.prg
+
+# D_0032: Cambio (EGS/SMG) e outros chamados pelo grupo 0x32
+d_0032.grp
+dsc_mk60.prg
+gs19.prg
+gs19a.prg
+gs19b.prg
+gs20.prg
+gs832.prg
+gs832_m.prg
+gs834.prg
+gs836.prg
+gs851.prg
+gs855.prg
+gs8600.prg
+gs8602.prg
+gs8603.prg
+gs8604.prg
+gs870.prg
+me9n45.prg
+mrs5.prg
+radio.prg
+smg.prg
+smg2.prg
+telefon.prg
+
+# D_003B: Video (GT)
+d_003b.grp
+video_gt.prg
+
+# D_0040: Chave com controle (FBZV)
+d_0040.grp
+fbzv.prg
+
+# D_0044: Imobilizador (EWS)
+d_0044.grp
+ews.prg
+ews3.prg
+ews3d.prg
+
+# D_0050: Volante multifuncao (MFL)
+d_0050.grp
+mfl.prg
+mfl2.prg
+mflr.prg
+mflr50.prg
+
+# D_0056: ABS / ASC / DSC
+d_0056.grp
+abd5.prg
+abs5.prg
+absmk20.prg
+absmk4g.prg
+ads.prg
+asc4gus.prg
+asc5.prg
+asc57.prg
+asc57r75.prg
+asc5d.prg
+ascmk20.prg
+ascmk4g.prg
+dsc3.prg
+dsc5.prg
+dsc57.prg
+dsc_e46.prg
+
+# D_0057: Sensor de angulo do volante (LWS)
+d_0057.grp
+lws5.prg
+lws5_1b.prg
+lws5_2.prg
+lws5__.prg
+
+# D_005B: Ar-condicionado (IHKA)
+d_005b.grp
+ihka46.prg
+ihka46_2.prg
+ihka46_3.prg
+ihkr46.prg
+
+# D_0060: Sensor de estacionamento (PDC)
+d_0060.grp
+pdcact.prg
+pdce38.prg
+
+# D_0068: Radio / MFL
+d_0068.grp
+rad_83.prg
+
+# D_006A: DSP
+d_006a.grp
+dsp.prg
+dsp2.prg
+dsp2_r.prg
+dsp_r50.prg
+topdsp.prg
+topdsp2.prg
+
+# D_0070: Pressao dos pneus (RDC)
+d_0070.grp
+dws.prg
+rdc.prg
+rdc_53.prg
+rdc_kbus.prg
+
+# D_0072: Banco do motorista com memoria
+d_0072.grp
+sm46.prg
+sm46_3.prg
+sm46_4.prg
+sm46c_4.prg
+sm46c_4m.prg
+sm46c_5.prg
+sm46c_5m.prg
+
+# D_0076: CD changer
+d_0076.grp
+cdc.prg
+cdc_46.prg
+
+# D_007F: Navegacao
+d_007f.grp
+navigat.prg
+navmk2.prg
+navmk3.prg
+navmk4.prg
+navmk4_2.prg
+
+# D_0080: Painel (IKE/KOMBI)
+d_0080.grp
+ike.prg
+kombi46.prg
+kombi46r.prg
+
+# D_009A: Regulagem dos farois (LWR)
+d_009a.grp
+lwr2a.prg
+
+# D_00A4: Airbag (MRS)
+d_00a4.grp
+bae.prg
+mrs2.prg
+mrs3.prg
+mrs3kw.prg
+mrs4.prg
+mrs4rd.prg
+mrs5k.prg
+zae.prg
+zae2.prg
+
+# D_00B0: Controle por voz (SES)
+d_00b0.grp
+ses.prg
+
+# D_00C8: Telefone
+d_00c8.grp
+bit.prg
+bit2.prg
+telibus.prg
+telibus2.prg
+telibus3.prg
+ulf.prg
+
+# D_00D0: Luzes (LCM/LSZ)
+d_00d0.grp
+lcm.prg
+lcm_a.prg
+lcm_ii.prg
+lcm_iii.prg
+lcm_iv.prg
+lsz.prg
+lsz_2.prg
+
+# D_00DA: Banco do passageiro com memoria
+d_00da.grp
+b_sm46_3.prg
+b_sm46_4.prg
+bsm46c_4.prg
+bsm46c_5.prg
+
+# D_00E8: Sensor de chuva (RLS)
+d_00e8.grp
+rls_ds2.prg
+
+# D_00ED: Video / TV
+d_00ed.grp
+video_3.prg
+video_tv.prg
+videomod.prg
+vm5ibus.prg
+
+# D_00F0: Monitor de bordo (BMBT)
+d_00f0.grp
+bm46wide.prg
+bm_wide.prg
+bmbt46rn.prg
+bmbt46tn.prg
+bmbt_mir.prg
+bmbtr50.prg
+bordmoni.prg

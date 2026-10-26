@@ -34,6 +34,9 @@ Para ler todos os modulos, os arquivos (.prg e .grp) ficam DENTRO do app:
 botao direito em "E46Fanatics Scan.app" > Mostrar Conteudo do Pacote >
 Contents > Resources > modulos. Coloque os arquivos soltos nessa pasta e abra o
 programa de novo (na primeira vez demora alguns segundos).
+Pode copiar a pasta inteira de modulos de uma instalacao do INPA/EDIABAS (mesmo com
+milhares de arquivos de outros BMW): o programa usa so os arquivos do E46, listados em
+Contents/Resources/e46-modulos.txt. Os outros sao ignorados.
 
 NO CARRO
 --------

@@ -7,12 +7,25 @@ $base = Join-Path $app 'E46Fanatics-Scan.html'
 $out = Join-Path $app 'E46Fanatics-Scan-completo.html'
 $stampFile = Join-Path $app 'completo.stamp'
 
+# e46-modulos.txt (ao lado deste script): so os arquivos listados sao juntados. Sem a lista, junta tudo.
+$listFile = Join-Path $app 'e46-modulos.txt'
+$allow = @{}
+$listTicks = 0
+if (Test-Path -LiteralPath $listFile) {
+  foreach ($l in [IO.File]::ReadAllLines($listFile)) {
+    $n = $l.Trim()
+    if ($n -ne '' -and -not $n.StartsWith('#')) { $allow[$n.ToLowerInvariant()] = $true }
+  }
+  $listTicks = (Get-Item -LiteralPath $listFile).LastWriteTimeUtc.Ticks
+}
+
 $files = @(Get-ChildItem -LiteralPath $mods -File -ErrorAction SilentlyContinue |
-  Where-Object { $_.Extension -match '^\.(prg|grp)$' } | Sort-Object Name)
+  Where-Object { $_.Extension -match '^\.(prg|grp)$' -and ($allow.Count -eq 0 -or $allow.ContainsKey($_.Name.ToLowerInvariant())) } |
+  Sort-Object Name)
 if ($files.Count -eq 0) { exit 1 }
 
-# so remonta quando algo mudou (arquivos da pasta ou o proprio programa)
-$stamp = (($files | ForEach-Object { '{0}|{1}|{2}' -f $_.Name, $_.Length, $_.LastWriteTimeUtc.Ticks }) -join ';') + ';' + (Get-Item -LiteralPath $base).LastWriteTimeUtc.Ticks
+# so remonta quando algo mudou (arquivos da pasta, a lista ou o proprio programa)
+$stamp = (($files | ForEach-Object { '{0}|{1}|{2}' -f $_.Name, $_.Length, $_.LastWriteTimeUtc.Ticks }) -join ';') + ';' + (Get-Item -LiteralPath $base).LastWriteTimeUtc.Ticks + ';' + $listTicks
 if ((Test-Path -LiteralPath $out) -and (Test-Path -LiteralPath $stampFile) -and ((Get-Content -LiteralPath $stampFile -Raw) -eq $stamp)) { exit 0 }
 
 # pacote: gzip( u32 tamanho do cabecalho | JSON [[nome, tamanho], ...] | bytes dos arquivos ), em base64

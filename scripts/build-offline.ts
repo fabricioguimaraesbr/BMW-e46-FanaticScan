@@ -31,6 +31,7 @@ writeFileSync(join(out, 'app', 'E46Fanatics-Scan.html'), html);
 copyFileSync(L('e46diag.ico'), join(out, 'app', 'e46diag.ico'));
 crlf(L('montar.ps1'), join(out, 'app', 'montar.ps1'));
 copyFileSync(L('montar.pl'), join(out, 'app', 'montar.pl'));
+crlf(L('e46-modulos.txt'), join(out, 'app', 'e46-modulos.txt'));
 crlf(L('Abrir no Windows.bat'), join(out, 'Abrir no Windows.bat'));
 crlf(L('Criar atalho na Area de Trabalho.bat'), join(out, 'Criar atalho na Area de Trabalho.bat'));
 crlf(L('LEIA-ME.txt'), join(out, 'LEIA-ME.txt'));
@@ -53,6 +54,7 @@ chmodSync(join(app, 'MacOS', 'E46Fanatics Scan'), 0o755);
 copyFileSync(M('AppIcon.icns'), join(app, 'Resources', 'AppIcon.icns'));
 writeFileSync(join(app, 'Resources', 'E46Fanatics-Scan.html'), html);
 copyFileSync(L('montar.pl'), join(app, 'Resources', 'montar.pl'));
+copyFileSync(L('e46-modulos.txt'), join(app, 'Resources', 'e46-modulos.txt'));
 chmodSync(join(app, 'Resources', 'montar.pl'), 0o755);
 writeFileSync(
   join(app, 'Resources', 'modulos', 'LEIA-ME.txt'),

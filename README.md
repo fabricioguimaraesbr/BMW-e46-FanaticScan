@@ -68,7 +68,7 @@ Gera `release/E46Fanatics Scan/`:
 
 - `app/E46Fanatics-Scan.html`: o programa inteiro em um arquivo (~0,6 MB). Funciona sem internet e sem Node.js.
 - `modulos/`: vazia. Quem distribui coloca aqui os arquivos dos módulos.
-- `Abrir no Windows.bat` / `Abrir no Mac.command`: juntam os arquivos de `modulos` ao programa (`app/montar.ps1` no Windows, `app/montar.pl` no Mac, só quando algo mudou) e abrem `app/E46Fanatics-Scan-completo.html` como aplicativo. Com a pasta vazia, abrem o programa em plug & play. Não há tela para escolher pasta.
+- `Abrir no Windows.bat` / `Abrir no Mac.command`: juntam os arquivos de `modulos` ao programa (`app/montar.ps1` no Windows, `app/montar.pl` no Mac, só quando algo mudou) e abrem `app/E46Fanatics-Scan-completo.html` como aplicativo. Com a pasta vazia, abrem o programa em plug & play. Não há tela para escolher pasta. Só entram os arquivos usados pelo E46, listados em `app/e46-modulos.txt` (180 arquivos, de qualquer motor e versão do E46); os outros são ignorados, então dá para copiar a pasta inteira do EDIABAS. Sem a lista, entra tudo.
 - `Criar atalho na Area de Trabalho.bat`: cria o ícone "E46Fanatics Scan".
 - `LEIA-ME.txt`: instruções para quem vai usar.
 

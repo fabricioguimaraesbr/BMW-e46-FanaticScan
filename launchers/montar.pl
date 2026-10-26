@@ -18,15 +18,26 @@ my $dest  = $ARGV[2] // $app;
 my $out   = File::Spec->catfile($dest, 'E46Fanatics-Scan-completo.html');
 my $stampFile = File::Spec->catfile($dest, 'completo.stamp');
 
+sub slurp { my ($p) = @_; open(my $fh, '<:raw', $p) or die "$p: $!"; local $/; my $d = <$fh>; close $fh; return $d; }
+
+# e46-modulos.txt (ao lado deste script): so os arquivos listados sao juntados. Sem a lista, junta tudo.
+my $listFile = File::Spec->catfile($app, 'e46-modulos.txt');
+my %allow;
+if (-f $listFile) {
+  for my $l (split /\r?\n/, slurp($listFile)) {
+    $l =~ s/^\s+|\s+$//g;
+    next if $l eq '' || $l =~ /^#/;
+    $allow{lc $l} = 1;
+  }
+}
+
 opendir(my $dh, $mods) or exit 1;
-my @files = sort grep { /\.(prg|grp)$/i && -f File::Spec->catfile($mods, $_) } readdir($dh);
+my @files = sort grep { /\.(prg|grp)$/i && -f File::Spec->catfile($mods, $_) && (!%allow || $allow{lc $_}) } readdir($dh);
 closedir($dh);
 exit 1 unless @files;
 
-sub slurp { my ($p) = @_; open(my $fh, '<:raw', $p) or die "$p: $!"; local $/; my $d = <$fh>; close $fh; return $d; }
-
 my @st = map { my @s = stat(File::Spec->catfile($mods, $_)); "$_|$s[7]|$s[9]" } @files;
-my $stamp = join(';', @st) . ';' . (stat($base))[9];
+my $stamp = join(';', @st) . ';' . (stat($base))[9] . ';' . (-f $listFile ? (stat($listFile))[9] : 0);
 if (-f $out && -f $stampFile && slurp($stampFile) eq $stamp) { exit 0; }
 
 my (@entries, $body);
