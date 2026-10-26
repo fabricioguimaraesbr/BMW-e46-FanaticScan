@@ -1,6 +1,6 @@
 # E46Fanatics Scan: instruções para o Claude
 
-Ferramenta de diagnóstico do BMW E46 que roda no navegador (Chrome/Edge, via Web Serial), feita por engenharia reversa do INPA/EDIABAS e do BMW Scanner 1.4 (PA Soft). Leia também `docs/HANDOFF.md` (contexto completo) e `docs/` (achados técnicos).
+Ferramenta de diagnóstico do BMW E46 que roda no navegador (Chrome/Edge, via Web Serial), feita por engenharia reversa do INPA/EDIABAS e do BMW Scanner 1.4 (PA Soft). Leia também `README.md` (funcionamento e estrutura) e `docs/` (achados técnicos). O contexto completo do projeto (decisões, histórico, pendências) está nos documentos do Projeto "E46Fanatics Scan" no Claude.
 
 ## Dono e carro
 - O usuário fala português (Brasil). Converse em português. A interface do programa é em inglês.
@@ -24,4 +24,4 @@ Ferramenta de diagnóstico do BMW E46 que roda no navegador (Chrome/Edge, via We
 
 ## Arquitetura (resumo)
 `Web Serial → WebSerialChannel → ObdInterface (DS2) / Iso9141 (OBD-II) → Ediabas (interpretador BEST/2) ou NativeSession → DiagSession / HybridSession → UI (src/web/main.ts)`.
-Detalhes em `docs/HANDOFF.md`.
+Detalhes em `README.md` (seção Estrutura).
