@@ -72,6 +72,13 @@ Gera `release/E46Fanatics Scan/`:
 - `Criar atalho na Area de Trabalho.bat`: cria o ícone "E46Fanatics Scan".
 - `LEIA-ME.txt`: instruções para quem vai usar.
 
+E gera `release/E46Fanatics Scan - Mac/`, o **aplicativo de Mac** (Intel e Apple Silicon):
+
+- `E46Fanatics Scan.app`: abre com dois cliques, tem ícone próprio e pode ir para a pasta Aplicativos e para o Dock. Abre o programa numa janela própria do Chrome ou Edge. Os arquivos dos módulos ficam **dentro do app** (`Contents/Resources/modulos`, pelo "Mostrar Conteúdo do Pacote"); o resultado da junção vai para `~/Library/Application Support/E46Fanatics Scan`, porque o macOS pode rodar um app recém-baixado a partir de uma cópia somente leitura.
+- `LEIA-ME.txt`: instalação no Mac, inclusive como liberar o app na primeira abertura (ele não é assinado pela Apple).
+
+Quando o comando `zip` existe, o script também gera `release/E46Fanatics Scan.zip` e `release/E46Fanatics Scan - Mac.zip`, mantendo a permissão de execução. **Ao adicionar os arquivos dos módulos no app e recompactar, use um Mac (Finder > Comprimir):** um zip feito no Windows perde essa permissão e o app deixa de abrir.
+
 ## Live data
 
 - **Key metrics:** as 10 principais medições de cada módulo ficam sempre visíveis (4 relógios + 6 cartões), com a faixa normal desenhada e destaque em vermelho quando algo sai da faixa.

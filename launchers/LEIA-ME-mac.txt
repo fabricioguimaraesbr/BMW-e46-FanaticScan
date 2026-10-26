@@ -1,0 +1,47 @@
+E46Fanatics Scan para Mac - diagnostico do BMW E46
+==================================================
+
+Le a identificacao dos modulos, le e apaga erros, mostra dados em tempo real.
+Abre em modo SOMENTE LEITURA: nada e gravado no carro.
+Testes de atuador e resets ficam travados ate voce destravar.
+Codificacao/programacao nao existe neste programa.
+
+Funciona em Mac Intel e Apple Silicon (M1, M2, M3...).
+
+PRECISA DE
+----------
+1. Google Chrome ou Microsoft Edge. O Safari nao acessa o cabo.
+2. Cabo K+DCAN em modo K-line (chave do cabo ou ponte entre os pinos 7 e 8),
+   ou o cabo FTDI do BMW Scanner 1.4. O macOS ja tem o driver dos cabos FTDI.
+
+INSTALAR
+--------
+1. Arraste "E46Fanatics Scan.app" para a pasta Aplicativos (ou deixe onde quiser).
+2. Na primeira vez o macOS avisa que nao pode verificar o desenvolvedor
+   (o programa nao e assinado pela Apple). Para liberar, uma vez so:
+   - macOS 15 (Sequoia) ou mais novo: tente abrir, clique em "OK"/"Concluido",
+     va em Ajustes do Sistema > Privacidade e Seguranca, role ate o fim e clique
+     em "Abrir Mesmo Assim" ao lado de "E46Fanatics Scan". Confirme.
+   - macOS 14 ou mais antigo: botao direito no app > Abrir > Abrir.
+3. Depois disso, e so dois cliques (ou o icone no Dock / Launchpad).
+
+ARQUIVOS DOS MODULOS
+--------------------
+Sem arquivos o programa funciona em plug & play: identifica todos os modulos e le o
+MOTOR pelo OBD-II (erros padrao, apagar erros e dados em tempo real).
+
+Para ler todos os modulos, os arquivos (.prg e .grp) ficam DENTRO do app:
+botao direito em "E46Fanatics Scan.app" > Mostrar Conteudo do Pacote >
+Contents > Resources > modulos. Coloque os arquivos soltos nessa pasta e abra o
+programa de novo (na primeira vez demora alguns segundos).
+
+NO CARRO
+--------
+1. Feche o INPA, o BMW Scanner ou outro programa que use o cabo.
+2. Cabo na porta OBD, chave na posicao 2 (ou motor ligado).
+3. "Connect cable" e escolha a porta do cabo na janela do Chrome.
+4. Indicadores no topo: "Cable" verde = cabo ok. "Car" verde = carro respondendo.
+   "Car not responding" = ignicao desligada ou cabo fora do modo K-line.
+
+Se algo nao funcionar, abra a pagina "Log" no menu lateral, clique em "Save log"
+e envie o arquivo.

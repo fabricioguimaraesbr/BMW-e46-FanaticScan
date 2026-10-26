@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#25292e"/>
+      <stop offset="1" stop-color="#121417"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <rect x="100.5" y="100.5" width="823" height="823" rx="184.5" fill="none" stroke="#ffffff" stroke-opacity="0.08"/>
+  <!-- faixas tricolores do logo E46Fanatics (poligonos do logo, escala 9.6) -->
+  <g transform="translate(249.4 297) scale(9.6)">
+    <polygon fill="#0066B3" points="14.2,44.9 0,44.9 12.1,0.1 26.3,0.1"/>
+    <polygon fill="#023D79" points="28.4,44.9 14.1,44.9 26.2,0.1 40.5,0.1"/>
+    <polygon fill="#E22619" points="42.6,44.9 28.4,44.9 40.5,0.1 54.7,0.1"/>
+  </g>
+</svg>

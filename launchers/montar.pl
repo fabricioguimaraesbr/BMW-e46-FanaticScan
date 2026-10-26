@@ -1,6 +1,8 @@
 #!/usr/bin/perl
 # Junta os arquivos da pasta "modulos" ao programa (E46Fanatics-Scan-completo.html).
-# Chamado pelo "Abrir no Mac.command". Sai com 0 quando ha arquivos de modulos, 1 quando a pasta esta vazia.
+# Chamado pelo "Abrir no Mac.command" (sem argumentos) e pelo "E46Fanatics Scan.app"
+# (argumentos: programa base, pasta dos modulos, pasta onde gravar o resultado).
+# Sai com 0 quando ha arquivos de modulos, 1 quando a pasta esta vazia.
 use strict;
 use warnings;
 use File::Basename qw(dirname);
@@ -10,10 +12,11 @@ use IO::Compress::Gzip qw(gzip $GzipError);
 use MIME::Base64 qw(encode_base64);
 
 my $app   = dirname(abs_path($0));
-my $mods  = File::Spec->catdir(dirname($app), 'modulos');
-my $base  = File::Spec->catfile($app, 'E46Fanatics-Scan.html');
-my $out   = File::Spec->catfile($app, 'E46Fanatics-Scan-completo.html');
-my $stampFile = File::Spec->catfile($app, 'completo.stamp');
+my $base  = $ARGV[0] // File::Spec->catfile($app, 'E46Fanatics-Scan.html');
+my $mods  = $ARGV[1] // File::Spec->catdir(dirname($app), 'modulos');
+my $dest  = $ARGV[2] // $app;
+my $out   = File::Spec->catfile($dest, 'E46Fanatics-Scan-completo.html');
+my $stampFile = File::Spec->catfile($dest, 'completo.stamp');
 
 opendir(my $dh, $mods) or exit 1;
 my @files = sort grep { /\.(prg|grp)$/i && -f File::Spec->catfile($mods, $_) } readdir($dh);
