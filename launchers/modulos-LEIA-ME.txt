@@ -1,0 +1,10 @@
+Coloque aqui os arquivos dos modulos (.prg e .grp), soltos nesta pasta (sem subpastas).
+
+Para cada modulo sao necessarios o arquivo do grupo (D_00xx.GRP) e o arquivo do modulo.
+Exemplo, motor do 325i 2001: D_0012.GRP e MS430DS0.PRG.
+
+Depois de colocar ou trocar arquivos, feche o programa e abra de novo por
+"Abrir no Windows" / "Abrir no Mac" (ou pelo atalho). Na primeira vez demora alguns segundos.
+
+Modulo sem arquivo aqui continua funcionando em modo plug & play
+(motor pelo OBD-II, demais modulos so identificacao).

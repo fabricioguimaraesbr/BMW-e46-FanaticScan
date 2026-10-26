@@ -1,0 +1,27 @@
+{
+  "name": "e46fanatics-scan",
+  "version": "1.0.0",
+  "description": "E46Fanatics Scan: diagnóstico BMW E46 (DS2/EDIABAS + OBD-II) no navegador via Web Serial",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc -p ."
+  },
+  "keywords": [],
+  "author": "",
+  "license": "GPL-3.0-or-later",
+  "devDependencies": {
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@fontsource/titillium-web": "^5.3.0",
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.5",
+    "vite-plugin-singlefile": "^2.3.4",
+    "vitest": "^3.2.7"
+  },
+  "type": "module",
+  "private": true
+}

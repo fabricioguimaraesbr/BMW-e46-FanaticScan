@@ -1,0 +1,157 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Proposta C · Estoril & OBC</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@500;600&family=VT323&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}html,body{margin:0}body{min-height:100vh;font:400 15px/1.4 var(--sans);color:var(--text);background:var(--bg);font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;cursor:pointer}
+.top{display:flex;align-items:center;gap:24px;padding:14px 24px;background:var(--topbg);border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:14px}.logo{height:30px;width:auto}
+.prod{display:flex;flex-direction:column;border-left:1px solid var(--line);padding-left:14px;line-height:1.1}.prod b{font:600 18px var(--cond);letter-spacing:.08em;text-transform:uppercase}.prod small{color:var(--muted);font-size:11px;letter-spacing:.06em;text-transform:uppercase}
+.car{display:flex;flex-direction:column;margin-left:auto;text-align:right;line-height:1.15}.carname{font:600 20px var(--cond)}.carspec{color:var(--muted);font-size:12px}
+.pills{display:flex;gap:8px;align-items:center}
+.pill{display:flex;align-items:center;gap:8px;height:34px;padding:0 12px;border:1px solid var(--line);border-radius:var(--rad);font-size:13px;font-weight:600;background:var(--panel)}
+.pill i{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)}.pill em{font-style:normal;color:var(--muted);font-weight:400}
+.disc{height:34px;padding:0 14px;border:1px solid var(--line);border-radius:var(--rad);background:transparent}
+.shell{display:grid;grid-template-columns:210px 1fr;min-height:calc(100vh - 64px)}
+.side{display:flex;flex-direction:column;gap:2px;padding:18px 12px;border-right:1px solid var(--line);background:var(--sidebg)}
+.nav{padding:10px 14px;border-radius:var(--rad);color:var(--muted);font-weight:500;cursor:pointer}.nav.on{color:var(--text);background:var(--navon)}
+.side-foot{margin-top:auto;padding:12px 14px;font-size:12px;color:var(--muted);border-top:1px solid var(--line)}.side-foot small{color:var(--dim)}
+main{padding:20px 24px 32px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.mods{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px}
+.mod{display:grid;grid-template-columns:auto 1fr;column-gap:8px;align-items:center;text-align:left;padding:8px 14px;border:1px solid var(--line);border-radius:var(--rad);background:var(--panel);min-width:130px}
+.mod small{grid-column:2;color:var(--muted);font-size:11px}.mod b{font:600 14px var(--cond)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--green);grid-row:span 2}.dot.warn{background:var(--red)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radl);padding:16px 20px}
+.head{display:flex;align-items:center;justify-content:space-between}.head h2{margin:0;font:600 22px var(--cond)}.head p{margin:2px 0 0;color:var(--muted);font-size:13px}
+.acts{display:flex;gap:8px}.b{height:36px;padding:0 16px;border:1px solid var(--line);border-radius:var(--rad);background:var(--panel2);font-weight:600;font-size:13px}
+.dials{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.dw{background:var(--dialbg);border:1px solid var(--line);border-radius:var(--radl);padding:14px 12px 8px}
+.dial{width:100%;display:block}
+.tiles{display:grid;grid-template-columns:repeat(6,1fr);gap:12px}
+.tile{background:var(--panel);border:1px solid var(--line);border-radius:var(--radl);padding:12px 14px}
+.tl{color:var(--muted);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+.tv{font:500 30px var(--valfont);color:var(--amber);margin:6px 0 2px;text-shadow:0 0 14px var(--glow)}.tv span{font:500 13px var(--sans);color:var(--muted);margin-left:4px;text-shadow:none}
+.tr{font-size:11px;color:var(--dim)}.tile.high .tv{color:var(--red);text-shadow:0 0 14px rgba(255,70,70,.4)}.tile.high .tr{color:var(--red)}
+.ch{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}.ch h3{margin:0;font:600 15px var(--cond);text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}.leg{color:var(--amber);font-size:12px}
+.spark{width:100%;height:120px;display:block}.spark .grid{stroke:var(--line);stroke-width:1}.spark .line{fill:none;stroke:var(--amber);stroke-width:2;vector-effect:non-scaling-stroke;filter:drop-shadow(0 0 4px var(--glow))}
+.dial .arc{fill:none;stroke:var(--arc);stroke-width:2}.dial .ok{fill:none;stroke:var(--okband);stroke-width:3;stroke-linecap:round}.dial .red{fill:none;stroke:var(--red);stroke-width:4}
+.dial .tick{stroke:var(--tick);stroke-width:1.2}.dial .tick.major{stroke-width:2.6}.dial .tick.r{stroke:var(--red)}
+.dial .num{font:600 13px var(--cond);fill:var(--numcol)}.dial .num.r{fill:var(--red)}
+.dial .ndl{fill:var(--needle);filter:drop-shadow(0 0 3px var(--needleglow))}.dial .hub{fill:var(--hub);stroke:var(--line);stroke-width:1}
+.dial .val{font:500 28px var(--valfont);fill:var(--amber);filter:drop-shadow(0 0 6px var(--glow))}.dial .unit{font:500 11px var(--sans);fill:var(--muted);letter-spacing:.08em}
+.dial .lbl{font:600 12px var(--sans);fill:var(--muted);letter-spacing:.08em;text-transform:uppercase}
+@media (max-width:1100px){.tiles{grid-template-columns:repeat(3,1fr)}.dials{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:760px){.shell{grid-template-columns:1fr}.side{flex-direction:row;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line);padding:8px 16px}.side-foot{display:none}.car{display:none}.top{flex-wrap:wrap;padding:12px 16px}.pills{margin-left:auto}main{padding:16px}.tiles{grid-template-columns:repeat(2,1fr)}.pill em{display:none}}
+:root{--bg:#0b1220;--topbg:linear-gradient(180deg,#c9ced4,#9aa1a9);--sidebg:#0d1626;--panel:#111b2e;--panel2:#18243b;--line:#22314d;--text:#e6ebf3;--muted:#8d9bb3;--dim:#5b6a85;
+--amber:#ff9a2e;--glow:rgba(255,154,46,.55);--red:#ff5147;--green:#43d98f;--rad:8px;--radl:14px;--navon:rgba(66,144,246,.14);
+--sans:'Barlow',sans-serif;--cond:'Barlow Semi Condensed',sans-serif;--valfont:'VT323',monospace;
+--dialbg:linear-gradient(#0f192b,#0a1220);--arc:#2c3d5c;--okband:rgba(66,144,246,.55);--tick:#b9c4d6;--numcol:#cfd8e6;--needle:#ff6a2a;--needleglow:rgba(255,106,42,.6);--hub:#c9ced4}
+body{background:radial-gradient(900px 500px at 80% -200px,#1b3566,transparent 70%),#0b1220}
+.top{color:#141a22;border-bottom:1px solid #6d747c;box-shadow:inset 0 1px 0 #eef1f4,0 4px 18px rgba(0,0,0,.5)}
+.top .prod,.top .carspec,.top .prod small{color:#3c444e;border-color:#7d858e}.top .logo .st1{fill:#4a4f55}
+.top .pill{background:#0b1220;color:#e6ebf3;border-color:#0b1220}.top .disc{border-color:#5d656e;color:#141a22}
+.tv{font-size:40px;font-weight:400;line-height:.9;letter-spacing:.02em}
+.dial .val{font-size:36px}
+.tile{position:relative;background:linear-gradient(#121d31,#0e1828)}
+.tv{background:#1a0e04;background:linear-gradient(#170c03,#0f0802);border:1px solid #2a1a0a;border-radius:4px;padding:4px 8px 2px;display:inline-block;box-shadow:inset 0 0 12px rgba(0,0,0,.8)}
+.dial .bezel{fill:#aab1b9;stroke:#e1e5ea;stroke-width:1}.dial .face{fill:#0a1220}
+.nav.on{color:#fff;box-shadow:inset 3px 0 0 #4290f6}
+.b.pri{background:#4290f6;border-color:#4290f6;color:#fff}
+.mod.on{background:linear-gradient(#c9ced4,#a7aeb6);color:#141a22;border-color:#c9ced4}.mod.on small{color:#3c444e}
+</style></head><body class="c-estoril-obc">
+<header class="top">
+  <div class="brand">
+
+<svg version="1.1" class="logo" aria-label="E46Fanatics" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px"
+	 viewBox="0 0 189 45" style="enable-background:new 0 0 189 45;" xml:space="preserve">
+<style type="text/css">
+	.st0{fill:#4290F6;}
+	.st1{fill:#ACADAE;}
+	.st2{fill:#E22619;}
+	.st3{fill:#023D79;}
+	.st4{fill:#0066B3;}
+</style>
+<path class="st0" d="M54.6,0.1h19.5l-2.4,9h-7.8l-2.3,8.5h7.3l-2.2,8.6h-7.3L56.7,36h8.6l-2.4,9H42.7L54.6,0.1z"/>
+<path class="st0" d="M92,0.9l-5.5,20.6h2.2l-1.4,5.3h-2.2l-1.5,5.5h-7.9l1.5-5.5h-9.4l1.4-5.3L81.5,0.9H92z M78.6,21.5l3.5-13.4
+	l-7.1,13.4H78.6z"/>
+<g>
+	<path class="st0" d="M106.3,27.9L106.3,27.9L106.3,27.9L106.3,27.9z"/>
+	<path class="st0" d="M112.4,4.1c-0.3-1.3-1-2.3-2.2-3C109,0.4,107.3,0,105,0c-1.8,0-3.4,0.3-4.9,0.8c-1.5,0.6-2.8,1.4-3.9,2.5
+		c-1.1,1.3-1.9,2.5-2.3,3.7c-0.4,1.3-1.2,3.7-2.2,7.6L90.4,19c-0.9,3.4-1.5,5.9-1.7,7.1c-0.2,1.2-0.1,2.3,0.3,3.4
+		c0.4,1.1,1.2,1.9,2.4,2.5c1.2,0.6,2.8,0.9,4.9,0.9c1.3,0,2.6-0.2,3.7-0.5l2.2-8.2h5.4c0.2-0.6,0.4-1.3,0.6-2.1l0.7-2.5
+		c0.5-1.8,0.7-3.3,0.7-4.4s-0.4-2-1.3-2.8c-0.9-0.8-2-1.2-3.5-1.2c-1.1,0-2.1,0.2-3,0.6c-0.9,0.4-1.6,1-2.3,1.9l1.3-5
+		c0.3-1.2,0.5-1.9,0.7-2.3c0.1-0.4,0.4-0.7,0.7-0.9c0.3-0.2,0.7-0.4,1.1-0.4c0.5,0,0.8,0.1,1,0.4c0.2,0.3,0.3,0.6,0.2,1
+		c-0.1,0.4-0.3,1.3-0.7,2.7h7.9C112.5,7.2,112.7,5.4,112.4,4.1z M100.7,16c0.6,0,0.9,0.2,1,0.6c0.1,0.4,0.1,1.2-0.2,2.3l-1.6,5.9
+		c-0.4,1.4-0.8,2.3-1.3,2.7c-0.4,0.3-0.8,0.5-1.2,0.5c-0.6,0-0.9-0.2-1-0.6c-0.1-0.4,0-1.3,0.4-2.7l1.5-5.8c0.3-1.1,0.6-1.9,1-2.3
+		C99.7,16.2,100.2,16,100.7,16z"/>
+</g>
+<path class="st1" d="M103.4,25.3h8.4l-1,3.8h-3.4l-1,3.6h3l-1,3.6h-3l-2.1,8h-4.9L103.4,25.3z"/>
+<path class="st1" d="M121.1,25.3l-2.3,19.1h-5l0.7-3.4h-1.8l-1.2,3.4h-5.1l7.7-19.1H121.1z M115.2,37.6c0.3-2.1,0.8-4.8,1.4-8
+	c-1.5,3.6-2.5,6.4-3.1,8H115.2z"/>
+<path class="st1" d="M135.9,25.3l-5.1,19.1h-4.3l-0.2-8.7l-2.3,8.7h-4.1l5.1-19.1h4.1l0.5,8.6l2.3-8.6
+	C131.9,25.3,135.9,25.3,135.9,25.3z"/>
+<path class="st1" d="M146.4,25.3l-2.3,19.1h-5l0.7-3.4h-1.8l-1.2,3.4h-5.1l7.7-19.1H146.4z M140.4,37.6c0.3-2.1,0.8-4.8,1.4-8
+	c-1.5,3.6-2.5,6.4-3.1,8H140.4z"/>
+<path class="st1" d="M158.8,25.3l-1,3.8h-2.9l-4.2,15.2h-4.9l4.1-15.2h-2.9l1-3.8H158.8z"/>
+<path class="st1" d="M164.9,25.3l-5.1,19.1h-4.9l5.1-19.1H164.9z"/>
+<path class="st1" d="M175.8,33.6h-4.9l0.9-3.3c0.3-1,0.4-1.6,0.3-1.8c0-0.2-0.2-0.4-0.6-0.4c-0.4,0-0.7,0.1-0.9,0.4
+	c-0.2,0.3-0.4,0.9-0.7,1.9l-2.3,9c-0.2,0.9-0.4,1.5-0.3,1.8c0,0.3,0.2,0.4,0.6,0.4c0.4,0,0.6-0.1,0.8-0.4c0.2-0.3,0.4-0.9,0.7-2
+	l0.6-2.4h4.9l-0.2,0.7c-0.5,2-1,3.3-1.5,4.2c-0.5,0.8-1.3,1.5-2.4,2.2c-1.1,0.6-2.4,0.9-3.7,0.9c-1.4,0-2.6-0.3-3.4-0.8
+	c-0.8-0.5-1.2-1.2-1.3-2.2c-0.1-0.9,0.2-2.3,0.7-4.2l1.5-5.5c0.4-1.4,0.7-2.4,1-3.1c0.3-0.7,0.7-1.3,1.4-2c0.6-0.6,1.4-1.1,2.3-1.5
+	c0.9-0.4,1.9-0.5,3-0.5c1.4,0,2.6,0.3,3.4,0.8c0.8,0.6,1.2,1.3,1.3,2.1c0.1,0.8-0.1,2.1-0.6,3.9L175.8,33.6z"/>
+<path class="st1" d="M188.4,31.1h-4.6l0.4-1.4c0.2-0.7,0.2-1.1,0.2-1.2c-0.1-0.2-0.2-0.3-0.5-0.3c-0.3,0-0.6,0.1-0.8,0.4
+	c-0.2,0.2-0.4,0.6-0.5,1.1c-0.2,0.6-0.2,1.1-0.1,1.4c0.1,0.3,0.4,0.7,1.1,1.2c1.8,1.3,2.9,2.4,3.3,3.2c0.3,0.8,0.3,2.2-0.2,4
+	c-0.4,1.3-0.8,2.3-1.3,3c-0.5,0.6-1.2,1.2-2.3,1.6c-1,0.4-2.1,0.6-3.3,0.6c-1.3,0-2.4-0.2-3.2-0.7s-1.2-1.1-1.3-1.9
+	c-0.1-0.8,0.1-1.9,0.5-3.3l0.3-1.2h4.6L180,40c-0.2,0.7-0.2,1.2-0.2,1.4c0.1,0.2,0.3,0.3,0.6,0.3s0.6-0.1,0.8-0.4
+	c0.2-0.3,0.4-0.6,0.5-1.1c0.3-1.1,0.3-1.8,0.1-2.2c-0.2-0.3-0.8-0.9-1.8-1.7c-1-0.8-1.7-1.4-2-1.8c-0.3-0.4-0.5-0.9-0.6-1.5
+	s0-1.5,0.3-2.5c0.4-1.4,0.9-2.5,1.4-3.2c0.6-0.7,1.3-1.2,2.2-1.6c0.9-0.4,2-0.6,3.1-0.6c1.3,0,2.3,0.2,3.1,0.6
+	c0.8,0.4,1.2,0.9,1.4,1.6c0.1,0.6,0,1.7-0.4,3.2L188.4,31.1z"/>
+<polygon class="st2" points="42.6,44.9 28.4,44.9 40.5,0.1 54.7,0.1 "/>
+<polygon class="st3" points="28.4,44.9 14.1,44.9 26.2,0.1 40.5,0.1 "/>
+<polygon class="st4" points="14.2,44.9 0,44.9 12.1,0.1 26.3,0.1 "/>
+</svg>
+<div class="prod"><b>Scan</b><small>BMW E46 diagnostics</small></div></div>
+  <div class="car"><span class="carname">325i</span><span class="carspec">M54B25 · ZF 5HP19 · 2001</span></div>
+  <div class="pills"><span class="pill ok"><i></i>Cable<em>FTDI · COM7</em></span><span class="pill ok"><i></i>Car<em>6 modules</em></span><button class="disc">Disconnect</button></div>
+</header>
+
+<div class="shell">
+  <nav class="side"><a class="nav">Overview</a><a class="nav">Faults</a><a class="nav on">Live Data</a><a class="nav">Tests & Functions</a><a class="nav">Report</a><a class="nav">Log</a><div class="side-foot">Read-only mode<br><small>Coding & programming blocked</small></div></nav>
+  <main>
+    <div class="mods"><button class="mod on"><span class="dot ok"></span><b>DME</b><small>MS43 engine</small></button><button class="mod"><span class="dot ok"></span><b>EGS</b><small>5HP19 transmission</small></button><button class="mod"><span class="dot warn"></span><b>ABS/DSC</b><small>MK20</small></button><button class="mod"><span class="dot ok"></span><b>Airbag</b><small>MRS</small></button><button class="mod"><span class="dot ok"></span><b>Cluster</b><small>KOMBI</small></button><button class="mod"><span class="dot ok"></span><b>IHKA</b><small>Climate</small></button></div>
+    <section class="panel head"><div><h2>Live data · DME MS43</h2><p>Warm idle detected · 1.2 reads/s</p></div><div class="acts"><button class="b">Record CSV</button><button class="b pri">■ Stop</button></div></section>
+    <section class="dials" id="dials"></section>
+    <section class="tiles"><div class="tile ok"><div class="tl">Intake air</div><div class="tv">31<span>°C</span></div><div class="tr">normal −25 – 60</div></div><div class="tile ok"><div class="tl">Air mass</div><div class="tv">17.4<span>kg/h</span></div><div class="tr">normal 10 – 25 at idle</div></div><div class="tile ok"><div class="tl">Injection time</div><div class="tv">2.9<span>ms</span></div><div class="tr">normal 1.8 – 4.5 at idle</div></div><div class="tile ok"><div class="tl">Ignition timing</div><div class="tv">9.0<span>°</span></div><div class="tr">normal 0 – 20 at idle</div></div><div class="tile high"><div class="tl">Fuel trim B1</div><div class="tv">1.12<span></span></div><div class="tr">▲ high · normal 0.90 – 1.10</div></div><div class="tile ok"><div class="tl">Fuel trim B2</div><div class="tv">1.04<span></span></div><div class="tr">normal 0.90 – 1.10</div></div></section>
+    <section class="panel chart"><div class="ch"><h3>Engine speed · last 60 s</h3><span class="leg">rpm</span></div><div id="sp"></div></section>
+  </main>
+</div>
+<script>
+const NS='http://www.w3.org/2000/svg';
+const P=(cx,cy,r,d)=>{const a=d*Math.PI/180;return[cx+r*Math.cos(a),cy+r*Math.sin(a)]};
+function arc(r,a0,a1){const[x0,y0]=P(100,100,r,a0),[x1,y1]=P(100,100,r,a1);return 'M'+x0+' '+y0+' A'+r+' '+r+' 0 '+(a1-a0>180?1:0)+' 1 '+x1+' '+y1}
+function e(t,a,p){const n=document.createElementNS(NS,t);for(const k in a)n.setAttribute(k,a[k]);p&&p.append(n);return n}
+function dial(host,d,o){const S=o.sweep,ST=o.start,ang=v=>ST+Math.max(0,Math.min(1,(v-d.min)/(d.max-d.min)))*S;
+ const s=e('svg',{viewBox:'0 0 200 '+(o.h||190),class:'dial'},host);
+ e('circle',{cx:100,cy:100,r:97,class:'bezel'},s);e('circle',{cx:100,cy:100,r:90,class:'face'},s);
+ e('path',{d:arc(84,ST,ST+S),class:'arc'},s);
+ if(d.lo!=null)e('path',{d:arc(89,ang(d.lo),ang(d.hi)),class:'ok'},s);
+ if(d.red!=null)e('path',{d:arc(84,ang(d.red),ST+S),class:'red'},s);
+ const mi=d.major/5,n=Math.round((d.max-d.min)/mi);
+ for(let i=0;i<=n;i++){const v=d.min+i*mi,a=ang(v),M=i%5==0,r=d.red!=null&&v>=d.red;const[x0,y0]=P(100,100,M?70:77,a),[x1,y1]=P(100,100,85,a);
+  e('line',{x1:x0,y1:y0,x2:x1,y2:y1,class:'tick'+(M?' major':'')+(r?' r':'')},s);
+  if(M){const[tx,ty]=P(100,100,56,a);const t=e('text',{x:tx,y:ty+4,class:'num'+(r?' r':''),'text-anchor':'middle'},s);t.textContent=d.fmt?+(d.fmt(+v.toFixed(2))).toFixed(1):+v.toFixed(2)}}
+ const g=e('g',{class:'needle',style:'transform-origin:100px 100px;transform:rotate('+ang(d.v)+'deg)'},s);
+ e('path',{d:'M86 100 L180 98.6 L180 101.4 Z',class:'ndl'},g);
+ e('circle',{cx:100,cy:100,r:o.hub||10,class:'hub'},s);
+ const vt=e('text',{x:100,y:o.vy||146,class:'val','text-anchor':'middle'},s);vt.textContent=d.v.toLocaleString('en-US');
+ const ut=e('text',{x:100,y:(o.vy||146)+14,class:'unit','text-anchor':'middle'},s);ut.textContent=d.unit;
+ const lt=e('text',{x:100,y:(o.h||190)-4,class:'lbl','text-anchor':'middle'},s);lt.textContent=d.label;}
+function spark(host,seed){const s=e('svg',{viewBox:'0 0 600 120',preserveAspectRatio:'none',class:'spark'},host);
+ for(let i=1;i<4;i++)e('line',{x1:0,x2:600,y1:i*30,y2:i*30,class:'grid'},s);
+ let pts=[],y=60;for(let x=0;x<=600;x+=6){y+=Math.sin(x*seed)*5+(Math.random()-.5)*6;y=Math.max(25,Math.min(95,y));pts.push(x+','+y.toFixed(1))}
+ e('polyline',{points:pts.join(' '),class:'line'},s);}
+
+const D=[{"label":"Engine speed","unit":"rpm","min":0,"max":7000,"red":6500,"major":1000,"v":720,"lo":600,"hi":6500,"fmt":v=>v/1000},{"label":"Coolant","unit":"°C","min":40,"max":140,"red":115,"major":20,"v":96,"lo":80,"hi":113},{"label":"Oil temp","unit":"°C","min":40,"max":160,"red":140,"major":20,"v":104,"lo":70,"hi":130},{"label":"Battery","unit":"V","min":8,"max":16,"red":15.2,"major":2,"v":14.1,"lo":12.4,"hi":14.8}];const O={"sweep":240,"start":150,"vy":170,"h":222,"hub":9};
+D.forEach(d=>{const w=document.createElement('div');w.className='dw';document.getElementById('dials').append(w);dial(w,d,O)});
+spark(document.getElementById('sp'),.031);
+</script></body></html>
