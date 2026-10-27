@@ -20,6 +20,10 @@ PRECISA DE
 2. Cabo K+DCAN (ou cabo FTDI do BMW Scanner 1.4).
    No E46 o cabo precisa estar no modo K-line: chave do cabo na posicao certa,
    ou ponte entre os pinos 7 e 8 (depende do modelo do cabo).
+   Dica: se o scan achar so o motor (DME) e o cambio (EGS), a chave do cabo nao
+   esta ligando os pinos 7 e 8. A numeracao da chave muda de cabo para cabo:
+   teste as posicoes (com o cabo fora do carro) ou meca com multimetro qual
+   posicao liga os pinos 7 e 8. Trocar a posicao nao tem risco para o carro.
 3. Driver do cabo:
    - Windows: normalmente o proprio Windows instala (o cabo aparece como "USB Serial Port (COMx)"
      no Gerenciador de Dispositivos). Se o INPA ja funciona nesse PC, esta tudo certo.

@@ -1,5 +1,10 @@
-// English translations of the German texts in the SGBD fault tables (MS43, GS8.60.4, ASC MK20).
-// Exact phrases first; other modules fall back to a word glossary. Internal signal names (TCO, MAF…) are kept.
+// English translations of the German texts in the SGBD fault tables.
+// Order: hand-written EXACT table (MS43, GS8.60.4, ASC MK20), then i18n-dict.json (every fault, condition and
+// environment text of the 180 E46 module files, translated for this project), then a word glossary as a last resort.
+// Internal signal names (TCO, MAF…) are kept.
+import DICT_JSON from './i18n-dict.json';
+const DICT = DICT_JSON as Record<string, string>;
+const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
 
 const EXACT: Record<string, string> = {
   // ---------------------------------------------------------------- MS43 fault locations
@@ -558,7 +563,7 @@ const WORDS: [RegExp, string][] = [
   W('Zylinder', 'cylinder'), W('Adaption(en)?', 'adaptation'), W('Wert', 'value', 'g'), W('\\bSteuern\\b', 'control'),
   W('Sonderfall', 'special case'), W('Laenge|Länge', 'length'),
   W('Sensor|Geber|F(ue|ü)hler', 'sensor'), W('Relais', 'relay'), W('Ventil', 'valve'), W('Pumpe', 'pump'),
-  W('Spannung', 'voltage'), W('Versorgung', 'supply'), W('Temperatur', 'temperature'), W('Drehzahl', 'speed'),
+  W('Spannung', 'voltage'), W('Versorgung', 'supply'), W('Temperatur(?!e)', 'temperature'), W('Drehzahl', 'speed'),
   W('Lampe', 'lamp'), W('Leuchte', 'light'), W('Heizung', 'heater'), W('L(ue|ü)fter', 'fan'), W('Klappe', 'flap'),
   W('T(ue|ü)r', 'door', 'g'), W('Fenster', 'window'), W('Spiegel', 'mirror'), W('Sitz', 'seat'), W('Blinker', 'turn signal'),
   W('Bremse', 'brake'), W('Masse', 'ground', 'g'), W('Codierung|Codierfehler', 'coding'), W('Schalter', 'switch'),
@@ -581,7 +586,7 @@ const WORDS: [RegExp, string][] = [
 
 export function translate(text: string): string {
   if (!text) return text;
-  const exact = EXACT[text] ?? EXACT[text.trim()];
+  const exact = EXACT[text] ?? EXACT[text.trim()] ?? DICT[norm(text)];
   if (exact !== undefined) return exact;
   if (/^[A-Z0-9_ ()\-.]+$/.test(text)) return text; // internal signal name
   let t = text;

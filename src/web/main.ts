@@ -92,7 +92,7 @@ function log(cls: string, text: string) {
 
 // ------------------------------------------------------------------ connection & status
 type CablePill = 'none' | 'detected' | 'connected' | 'unplugged' | 'reconnecting' | 'sim';
-const link = { lastAnswer: 0, lastNoAnswer: 0 };
+const link = { lastAnswer: 0, lastNoAnswer: 0, scanStart: 0 };
 let preCable = { present: false, name: '' };
 
 function cableState(): CablePill {
@@ -104,7 +104,10 @@ function cableState(): CablePill {
 function carState(): 'ok' | 'noanswer' | 'idle' {
   const c = cableState();
   if (c !== 'connected' && c !== 'sim') return 'idle';
-  if (link.lastAnswer && Date.now() - link.lastAnswer < 8000) return 'ok';
+  // A module that is not fitted (or is on a line the cable does not reach) does not answer; that must not
+  // turn the car red while other modules are answering. During a scan, any answer since it started counts.
+  if (S.scanning && link.lastAnswer >= link.scanStart && link.lastAnswer) return 'ok';
+  if (link.lastAnswer && Date.now() - link.lastAnswer < 30000) return 'ok';
   if (link.lastNoAnswer > link.lastAnswer) return 'noanswer';
   return link.lastAnswer ? 'ok' : 'idle';
 }
@@ -124,7 +127,7 @@ function statusPills() {
   const simToggle = S.mode === 'sim' ? () => { const ch = S.channel as SimChannel; if (ch.state === 'connected') ch.unplug(); else void ch.plug(); } : undefined;
   return h('div', { class: 'pills', id: 'pills' },
     h(simToggle ? 'button' : 'span', { class: `pill ${cc}`, onclick: simToggle, title: simToggle ? 'Simulator: click to unplug / plug the virtual cable' : S.session ? S.channel?.name ?? '' : preCable.name || 'Connect the cable to the USB port' }, h('span', { class: `led ${cc}` }), ct),
-    S.session ? h('span', { class: `pill ${rc}`, title: 'K-line: whether the car answers. No answer usually means the ignition is off or the K+DCAN switch is not in K-line mode.' }, h('span', { class: `led ${rc}` }), rt) : null,
+    S.session ? h('span', { class: `pill ${rc}`, title: 'K-line: whether the car answers. No answer usually means the ignition is off. On the E46 the K+DCAN cable must join OBD pins 7 and 8 (switch position for older cars), otherwise only the engine and transmission answer.' }, h('span', { class: `led ${rc}` }), rt) : null,
   );
 }
 function updatePills() {
@@ -200,6 +203,7 @@ async function scan() {
   if (!S.session || S.scanning) return;
   const session = S.session;
   S.scanning = true;
+  link.scanStart = Date.now();
   S.mods.clear();
   render();
   await session.scan(E46_MODULES, (e) => {
@@ -631,7 +635,7 @@ function renderChips() {
         h('span', { class: `led ${s.cls}` }), h('b', {}, m.short), h('small', {}, s.text || m.name));
     }),
     S.scanning ? h('span', { class: 'chip ghost' }, h('span', { class: 'led busy' }), h('b', {}, 'Scanning…')) : null,
-    !S.scanning ? h('button', { class: 'chip ghost', onclick: scan, title: missing ? `${missing} modules did not respond` : '' }, h('b', {}, 'Rescan'), missing ? h('small', {}, `${missing} not responding`) : null) : null,
+    !S.scanning ? h('button', { class: 'chip ghost', onclick: scan, title: missing ? `${missing} modules did not respond: not fitted to this car, or (if only engine and transmission answer) the cable switch is not joining OBD pins 7 and 8` : '' }, h('b', {}, 'Rescan'), missing ? h('small', {}, `${missing} not responding`) : null) : null,
   );
 }
 
@@ -645,7 +649,7 @@ function renderMain() {
   if (!S.selected || !modState(S.selected).scan?.variant) S.selected = foundModules()[0]?.group ?? null;
   if (!S.selected) {
     return main.replaceChildren(renderChips(),
-      h('div', { class: 'empty' }, h('strong', {}, S.scanning ? 'Looking for modules…' : 'No module responded'), S.scanning ? 'This takes a few seconds.' : 'Check the ignition is in position 2 and the cable is in K-line mode, then press Rescan.'));
+      h('div', { class: 'empty' }, h('strong', {}, S.scanning ? 'Looking for modules…' : 'No module responded'), S.scanning ? 'This takes a few seconds.' : 'Check the ignition is in position 2 and the cable is in K-line mode with OBD pins 7 and 8 joined, then press Rescan.'));
   }
   const m = moduleDef(S.selected);
   const st = modState(m.group);

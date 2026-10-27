@@ -13,6 +13,10 @@ PRECISA DE
 1. Google Chrome ou Microsoft Edge. O Safari nao acessa o cabo.
 2. Cabo K+DCAN em modo K-line (chave do cabo ou ponte entre os pinos 7 e 8),
    ou o cabo FTDI do BMW Scanner 1.4. O macOS ja tem o driver dos cabos FTDI.
+   Dica: se o scan achar so o motor (DME) e o cambio (EGS), a chave do cabo nao
+   esta ligando os pinos 7 e 8. A numeracao da chave muda de cabo para cabo:
+   teste as posicoes (com o cabo fora do carro) ou meca com multimetro qual
+   posicao liga os pinos 7 e 8. Trocar a posicao nao tem risco para o carro.
 
 INSTALAR
 --------
