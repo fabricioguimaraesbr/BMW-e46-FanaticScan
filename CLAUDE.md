@@ -17,7 +17,7 @@ Ferramenta de diagnóstico do BMW E46 que roda no navegador (Chrome/Edge, via We
 ## Comandos
 - `npm install`
 - `npm run dev`: abre em http://localhost:5173 (Chrome/Edge para o cabo; o simulador funciona em qualquer navegador).
-- `ECU_DIR=/caminho/para/EDIABAS/Ecu npm test`: 23 testes. Os que precisam dos arquivos da BMW são pulados sem `ECU_DIR`.
+- `ECU_DIR=/caminho/para/EDIABAS/Ecu npm test`: 32 testes. Os que precisam dos arquivos da BMW são pulados sem `ECU_DIR`.
 - `npm run typecheck`
 - `npx tsx scripts/build-offline.ts`: gera `release/E46Fanatics Scan/` (pacote Windows/Mac com atalhos) e `release/E46Fanatics Scan - Mac/` (o `E46Fanatics Scan.app`), mais os zips.
 - `node design/build-mockups.mjs`: regenera as 3 propostas visuais.

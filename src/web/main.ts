@@ -7,7 +7,8 @@ import { HybridSession } from '../core/api/HybridSession';
 import { EQUIPMENT_LABEL, EquipmentKey, isHiddenByEquipment } from '../core/api/equipment';
 import { SAFETY_LABEL } from '../core/api/safety';
 import { E46_MODULES, ModuleDef } from '../core/api/modules';
-import { EngineContext, KEY_METRICS, RefState, baseKey, engineContext, evaluate } from '../core/api/reference';
+import { EngineContext, KEY_METRICS, RefState, Reference, baseKey, engineContext, evaluate, referenceFor } from '../core/api/reference';
+import { PanelPick, barScale, sameValueId, groupValues, isFlag, kindOf, pickPanel, visibleValues } from '../core/api/livelayout';
 import type { JobResponse } from '../core/ediabas/Ediabas';
 import { createE46 } from '../core/sim/e46';
 import { NativeSession } from '../core/native/NativeSession';
@@ -17,7 +18,7 @@ import { ObdInterface } from '../core/transport/ObdInterface';
 import { toHex } from '../core/util/numbers';
 import { BrowserFileProvider } from './BrowserFileProvider';
 import { drawChart } from './chart';
-import { Gauge, formatNumber } from './gauge';
+import { formatNumber } from './gauge';
 import logoSvg from './assets/e46fanatics.svg?raw';
 import { WebSerialChannel, watchCable, webSerialAvailable } from './WebSerialChannel';
 
@@ -66,7 +67,20 @@ const S = {
   mods: new Map<string, ModState>(),
   log: [] as { cls: string; text: string }[],
   connError: '',
-  live: { running: false, job: '', values: [] as Value[], extra: [] as string[], hist: new Map<string, number[]>(), rate: 0, rec: null as string[][] | null, recKeys: [] as string[] },
+  live: {
+    running: false,
+    paused: false,
+    error: '',
+    chart: false,
+    /** every value read so far on this module, merged from all its value groups (insertion order = screen order) */
+    store: new Map<string, { v: Value; job: string }>(),
+    values: [] as Value[],
+    hist: new Map<string, number[]>(),
+    rate: 0,
+    rec: null as { t: string; vals: Map<string, number | string> }[] | null,
+    sig: '',
+    pass: { done: 0, total: 0 },
+  },
   jobSel: '',
   jobFilter: '',
   jobResult: null as JobResponse | null,
@@ -76,7 +90,6 @@ const moduleDef = (g: string) => E46_MODULES.find((m) => m.group === g)!;
 const hex2 = (n: number) => n.toString(16).toUpperCase().padStart(2, '0');
 const dtcCode = (d: Dtc) => d.label ?? hex2(d.code);
 const app = document.getElementById('app')!;
-let gauges: Gauge[] = [];
 
 function log(cls: string, text: string) {
   const time = new Date().toLocaleTimeString('en-GB', { hour12: false });
@@ -326,72 +339,110 @@ async function runJob(variant: string, job: JobListEntry, args: string) {
 
 // ------------------------------------------------------------------ live data
 const COLORS = ['#ffa033', '#4290f6', '#41d38a', '#e9ecef'];
+const LIVE_RERENDER_MS = 1200;
+let liveBuiltAt = 0;
 
-/** Key metrics for the current variant: the configured list matched to the values read, else the first 10 values. */
-function keyMetrics(variant: string): string[] {
-  const vals = S.live.values;
-  const want = KEY_METRICS[variant.toLowerCase()];
-  let keys: string[] = [];
-  if (want) for (const b of want) { const v = vals.find((x) => baseKey(x.key) === b); if (v) keys.push(v.key); }
-  if (!keys.length) keys = vals.slice(0, 10).map((v) => v.key);
-  return keys.slice(0, 10);
-}
-function splitKey(keys: string[]) {
-  const byKey = new Map(S.live.values.map((v) => [v.key, v]));
-  const dials = keys.filter((k) => typeof byKey.get(k)?.value === 'number').slice(0, 4);
-  return { dials, tiles: keys.filter((k) => !dials.includes(k)) };
-}
-
-async function startLive(group: string) {
-  const st = modState(group);
-  const variant = st.scan?.variant;
-  if (!variant || !S.session || !S.live.job) return;
-  S.live.running = true;
+function resetLive() {
+  S.live.running = false;
+  S.live.paused = false;
+  S.live.error = '';
+  S.live.store.clear();
+  S.live.values = [];
   S.live.hist.clear();
-  renderMain();
-  let n = 0;
-  let t0 = Date.now();
-  while (S.live.running && S.selected === group) {
-    const r = await S.session.readValues(variant, S.live.job);
-    if (!S.live.running) break;
-    if (r.error && !cableOk()) {
-      // cable pulled: pause and resume by itself when it is plugged back in
-      document.querySelector('#live-msg')?.replaceChildren(h('div', { class: 'msg warn' }, 'Cable unplugged. Reading is paused and continues as soon as the cable is plugged back in.'));
-      while (S.live.running && S.selected === group && !cableOk()) await new Promise((res) => setTimeout(res, 400));
-      document.querySelector('#live-msg')?.replaceChildren();
-      continue;
-    }
-    if (r.error) {
-      S.live.running = false;
-      renderMain();
-      document.querySelector('#live-msg')?.replaceChildren(h('div', { class: 'msg err' }, `Reading stopped: ${r.error}`));
-      return;
-    }
-    const first = !S.live.values.length;
-    const eq = st.avail?.equipment;
-    S.live.values = r.values.filter((v) => !isHiddenByEquipment(v.key, eq));
-    for (const v of r.values) {
-      if (typeof v.value !== 'number') continue;
+  S.live.sig = '';
+  S.live.rate = 0;
+  S.live.pass = { done: 0, total: 0 };
+}
+
+/** Value groups this module supports, the main data block first (it is read every cycle). */
+function liveJobs(st: ModState): string[] {
+  const avail = st.avail;
+  const jobs = (st.jobs ?? [])
+    .filter((j) => isLiveGroup(j) && !isHiddenByEquipment(j.name, avail?.equipment) && (!avail || avail.jobs.includes(j.name)))
+    .map((j) => j.name);
+  const main = jobs.find((j) => /MESSWERTEBLOCK|MESSWERTE$/.test(j)) ?? jobs.find((j) => j === 'STATUS_IO_LESEN');
+  return main ? [main, ...jobs.filter((j) => j !== main)] : jobs;
+}
+
+/** Adds one read to the merged list. A value another group already reports (same name once the STAT_/STATUS_ prefix is dropped) is not repeated. */
+function mergeValues(job: string, values: Value[], equipment: Availability['equipment'] | undefined) {
+  const owner = new Map<string, string>();
+  for (const [k, { job: j }] of S.live.store) owner.set(sameValueId(k), j);
+  for (const v of values) {
+    if (isHiddenByEquipment(v.key, equipment)) continue;
+    const id = sameValueId(v.key);
+    const o = owner.get(id);
+    if (o && (o !== job || !S.live.store.has(v.key))) continue;
+    owner.set(id, job);
+    S.live.store.set(v.key, { v, job });
+    if (typeof v.value === 'number') {
       const a = S.live.hist.get(v.key) ?? S.live.hist.set(v.key, []).get(v.key)!;
       a.push(v.value);
       if (a.length > 300) a.shift();
     }
-    if (S.live.rec) {
-      if (!S.live.recKeys.length) {
-        S.live.recKeys = r.values.map((v) => v.key);
-        S.live.rec.push(['time', ...r.values.map((v) => `${v.label}${v.unit ? ` (${v.unit})` : ''}`)]);
-      }
-      const byKey = new Map(r.values.map((v) => [v.key, v.value]));
-      S.live.rec.push([new Date().toISOString(), ...S.live.recKeys.map((k) => String(byKey.get(k) ?? ''))]);
+  }
+}
+
+const liveSig = (vals: Value[]) => vals.map((v) => v.key).join('|');
+
+async function startLive(group: string) {
+  const st = modState(group);
+  const variant = st.scan?.variant;
+  const session = S.session;
+  if (!variant || !session || S.live.running) return;
+  const [main, ...rest] = liveJobs(st);
+  if (!main) return;
+  S.live.running = true;
+  S.live.paused = false;
+  S.live.error = '';
+  S.live.pass = { done: 0, total: rest.length };
+  renderMain();
+  const failed = new Set<string>();
+  let next = 0;
+  let n = 0;
+  let t0 = Date.now();
+  const alive = () => S.live.running && S.selected === group && S.page === 'live' && S.session === session;
+  while (alive()) {
+    const r = await session.readValues(variant, main);
+    if (!alive()) break;
+    if (r.error && !cableOk()) {
+      // cable pulled: pause and resume by itself when it is plugged back in
+      document.querySelector('#live-msg')?.replaceChildren(h('div', { class: 'msg warn' }, 'Cable unplugged. Reading is paused and continues as soon as the cable is plugged back in.'));
+      while (alive() && !cableOk()) await new Promise((res) => setTimeout(res, 400));
+      document.querySelector('#live-msg')?.replaceChildren();
+      continue;
     }
+    if (r.error) {
+      S.live.error = `Reading stopped: ${r.error}`;
+      break;
+    }
+    mergeValues(main, r.values, st.avail?.equipment);
+    // the other groups: all of them every cycle when there are few, otherwise one per cycle in turn
+    const todo = rest.length <= 3 ? rest.filter((j) => !failed.has(j)) : [];
+    if (rest.length > 3) {
+      for (let i = 0; i < rest.length; i++) {
+        const j = rest[next % rest.length];
+        next++;
+        if (!failed.has(j)) { todo.push(j); break; }
+      }
+    }
+    for (const job of todo) {
+      const r2 = await session.readValues(variant, job);
+      if (!alive()) break;
+      if (r2.error || !r2.values.length) { if (cableOk()) failed.add(job); continue; }
+      mergeValues(job, r2.values, st.avail?.equipment);
+    }
+    S.live.pass.done = rest.length <= 3 ? rest.length : Math.min(rest.length, next);
+    S.live.values = [...S.live.store.values()].map((e) => e.v);
+    if (S.live.rec) S.live.rec.push({ t: new Date().toISOString(), vals: new Map(S.live.values.map((v) => [v.key, v.value])) });
     n++;
     if (Date.now() - t0 > 2000) {
       S.live.rate = (n * 1000) / (Date.now() - t0);
       n = 0;
       t0 = Date.now();
     }
-    if (first) renderMain();
-    updateLive();
+    if (liveSig(S.live.values) !== S.live.sig && (!S.live.sig || Date.now() - liveBuiltAt > LIVE_RERENDER_MS)) renderMain();
+    else updateLive();
   }
   S.live.running = false;
   renderMain();
@@ -399,90 +450,208 @@ async function startLive(group: string) {
 function stopLive() {
   S.live.running = false;
 }
+function pauseLive() {
+  S.live.paused = true;
+  S.live.running = false;
+  renderMain();
+}
+function resumeLive(group: string) {
+  S.live.paused = false;
+  S.live.error = '';
+  void startLive(group);
+}
 function toggleRecord() {
   if (S.live.rec) {
-    const csv = S.live.rec.map((r) => r.map((c) => (/[,"\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c)).join(',')).join('\n');
-    h('a', { href: URL.createObjectURL(new Blob([csv], { type: 'text/csv' })), download: `e46-${S.live.job.toLowerCase()}-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.csv` }).click();
+    const keys = [...S.live.store.keys()];
+    const head = keys.map((k) => { const v = S.live.store.get(k)!.v; return `${v.label}${v.unit && v.unit !== '-' ? ` (${v.unit})` : ''}`; });
+    const rows = [['time', ...head], ...S.live.rec.map((r) => [r.t, ...keys.map((k) => String(r.vals.get(k) ?? ''))])];
+    const csv = rows.map((r) => r.map((c) => (/[,"\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c)).join(',')).join('\n');
+    const mod = S.selected ? moduleDef(S.selected).short.toLowerCase() : 'live';
+    h('a', { href: URL.createObjectURL(new Blob([csv], { type: 'text/csv' })), download: `e46-${mod}-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.csv` }).click();
     S.live.rec = null;
-    S.live.recKeys = [];
   } else S.live.rec = [];
   renderMain();
 }
-function toggleExtra(key: string, on: boolean) {
-  S.live.extra = S.live.extra.filter((k) => k !== key);
-  if (on) S.live.extra.push(key);
-  renderMain();
+
+const fmt = (v: number | string | undefined) => (v === undefined ? '—' : typeof v === 'number' ? formatNumber(v) : v);
+const unitText = (u: string) => (u === '-' ? '' : u);
+const pctOf = (x: number, min: number, max: number) => Math.max(0, Math.min(100, ((x - min) / (max - min || 1)) * 100));
+
+/** Up to 4 numbers for the chart: the module's key metrics first. */
+function chartKeys(variant: string): string[] {
+  const nums = visibleValues(S.live.values).filter((v) => kindOf(v) === 'num');
+  const want = KEY_METRICS[variant.toLowerCase()] ?? [];
+  const keys: string[] = [];
+  for (const b of want) { const v = nums.find((x) => baseKey(x.key) === b); if (v) keys.push(v.key); }
+  for (const v of nums) if (!keys.includes(v.key)) keys.push(v.key);
+  return keys.slice(0, 4);
 }
 
-const STATE_TEXT: Record<RefState, string> = { ok: 'Normal', low: 'Low', high: 'High', cold: 'Warming up', na: '' };
-
-function metricTile(key: string, removable = false) {
-  return h('div', { class: 'tile', 'data-k': key },
-    h('div', { class: 't-head' }, h('span', { class: 't-label' }), removable ? h('button', { class: 't-x', title: 'Remove', 'aria-label': 'Remove from additional metrics', onclick: () => toggleExtra(key, false) }, '×') : null),
-    h('div', { class: 't-val' }),
-    h('div', { class: 't-bar' }, h('span', { class: 't-band' }), h('span', { class: 't-mark' })),
-    h('div', { class: 't-foot' }, h('span', { class: 't-state' }), h('span', { class: 't-range' })),
+// ---- cards
+function numCard(v: Value) {
+  return h('div', { class: 'lv-card', 'data-k': v.key },
+    h('div', { class: 'lv-top' }, h('span', { class: 'lv-label' }, v.label), h('span', { class: 'lv-val' }, h('b', {}), h('small', {}, unitText(v.unit)))),
+    h('div', { class: 'lv-bar' }, h('span', { class: 'lv-band' }), h('span', { class: 'lv-mark' })),
+    h('div', { class: 'lv-foot' }, h('span', { class: 'lv-min' }), h('span', { class: 'lv-ref' }), h('span', { class: 'lv-max' })),
   );
 }
+function refText(state: RefState, ref: Reference | undefined) {
+  if (!ref || (ref.lo === undefined && ref.hi === undefined)) return 'no reference';
+  const r = ref.lo !== undefined && ref.hi !== undefined ? `${formatNumber(ref.lo)} – ${formatNumber(ref.hi)}` : ref.hi !== undefined ? `≤ ${formatNumber(ref.hi)}` : `≥ ${formatNumber(ref.lo!)}`;
+  const idle = ref.idleOnly ? ' at idle' : '';
+  if (state === 'high') return `ABOVE ref ${r}`;
+  if (state === 'low') return `BELOW ref ${r}`;
+  if (state === 'cold') return `warming up · ref ${r}`;
+  return `ref ${r}${idle}`;
+}
+function updateCard(el: Element, v: Value, ctx: EngineContext) {
+  const { state, ref } = evaluate(v.key, v.value, ctx, v.unit);
+  const num = typeof v.value === 'number' ? v.value : NaN;
+  const sc = barScale(v, S.live.hist.get(v.key));
+  el.className = `lv-card ${state}`;
+  el.setAttribute('title', `${ref?.note ? `${ref.note}\n` : ''}${v.key}`);
+  el.querySelector('.lv-val b')!.textContent = fmt(v.value);
+  const band = el.querySelector<HTMLElement>('.lv-band')!;
+  if (ref && (ref.lo !== undefined || ref.hi !== undefined)) {
+    const a = pctOf(ref.lo ?? sc.min, sc.min, sc.max);
+    const b = pctOf(ref.hi ?? sc.max, sc.min, sc.max);
+    band.style.cssText = `left:${a}%;width:${Math.max(0, b - a)}%`;
+  } else band.style.cssText = 'display:none';
+  (el.querySelector('.lv-mark') as HTMLElement).style.left = `${Number.isNaN(num) ? 0 : pctOf(num, sc.min, sc.max)}%`;
+  el.querySelector('.lv-min')!.textContent = formatNumber(sc.min);
+  el.querySelector('.lv-max')!.textContent = formatNumber(sc.max);
+  el.querySelector('.lv-ref')!.textContent = refText(state, ref);
+}
+function stateBox(v: Value) {
+  return h('div', { class: 'lv-state', 'data-s': v.key, title: v.key }, h('span', { class: 'lv-label' }, v.label), h('b', {}));
+}
+function updateStateBox(el: Element, v: Value) {
+  const flag = isFlag(v);
+  const off = flag && !v.value;
+  el.className = `lv-state ${off ? 'off' : ''}`;
+  el.querySelector('b')!.textContent = flag ? (v.value ? 'On' : 'Off') : `${fmt(v.value)}${unitText(v.unit) ? ` ${v.unit}` : ''}`;
+}
 
-function updateTile(el: Element, v: Value | undefined, ctx: EngineContext) {
-  const { state, ref } = evaluate(v?.key ?? '', v?.value, ctx);
-  el.className = `tile ${state}`;
-  el.querySelector('.t-label')!.textContent = v?.label ?? '—';
-  el.querySelector('.t-val')!.replaceChildren(fmt(v?.value), h('small', {}, v?.unit === '-' ? '' : v?.unit ?? ''));
-  const bar = el.querySelector<HTMLElement>('.t-bar')!;
-  const num = typeof v?.value === 'number' ? v.value : NaN;
-  if (ref && (ref.lo !== undefined || ref.hi !== undefined) && !Number.isNaN(num)) {
-    const lo = ref.lo ?? Math.min(0, num);
-    const hi = ref.hi ?? Math.max(lo + 1, num);
-    const span = hi - lo || 1;
-    const min = lo - span * 0.5;
-    const max = hi + span * 0.5;
-    const pct = (x: number) => Math.max(0, Math.min(100, ((x - min) / (max - min)) * 100));
-    bar.style.display = '';
-    (bar.querySelector('.t-band') as HTMLElement).style.cssText = `left:${pct(lo)}%;width:${pct(hi) - pct(lo)}%`;
-    (bar.querySelector('.t-mark') as HTMLElement).style.left = `${pct(num)}%`;
-    el.querySelector('.t-range')!.textContent = `${ref.lo !== undefined ? formatNumber(ref.lo) : '…'} – ${ref.hi !== undefined ? formatNumber(ref.hi) : '…'}${ref.idleOnly ? ' at idle' : ''}`;
-    el.setAttribute('title', ref.note);
-  } else {
-    bar.style.display = 'none';
-    el.querySelector('.t-range')!.textContent = ref?.idleOnly ? 'checked at idle' : '';
-    if (ref) el.setAttribute('title', ref.note);
+// ---- instrument panel (an original design: rev counter, centre readout, two temperature columns)
+function tachoSvg(lo: number, hi: number, max: number) {
+  const c = 160;
+  const pt = (f: number, r: number) => { const a = ((135 + 270 * f) * Math.PI) / 180; return [c + r * Math.cos(a), c + r * Math.sin(a)].map((x) => x.toFixed(1)).join(' '); };
+  const arc = (f1: number, f2: number, r: number) => `M ${pt(f1, r)} A ${r} ${r} 0 ${(f2 - f1) * 270 > 180 ? 1 : 0} 1 ${pt(f2, r)}`;
+  let minor = '';
+  let major = '';
+  let labels = '';
+  for (let x = 0; x <= max; x += 500) {
+    const f = x / max;
+    if (x % 1000 === 0) {
+      major += `M ${pt(f, 140)} L ${pt(f, 118)} `;
+      const [lx, ly] = pt(f, 96).split(' ');
+      labels += `<text x="${lx}" y="${ly}" class="${x >= hi ? 'red' : ''}">${x / 1000}</text>`;
+    } else minor += `M ${pt(f, 140)} L ${pt(f, 128)} `;
   }
-  el.querySelector('.t-state')!.textContent = ref?.idleOnly && !ctx.idle ? '' : STATE_TEXT[state];
+  return `<svg viewBox="0 0 320 320" class="lv-tacho-svg" aria-hidden="true">
+    <circle cx="160" cy="160" r="152" class="face"/>
+    <path d="${arc(lo / max, Math.min(hi, max) / max, 146)}" class="band"/>
+    ${hi < max ? `<path d="${arc(hi / max, 1, 146)}" class="redzone"/>` : ''}
+    <path d="${minor}" class="minor"/><path d="${major}" class="major"/>
+    <g class="labels">${labels}</g>
+    <text x="160" y="206" class="cap">RPM ×1000</text>
+    <text x="160" y="254" class="val">—</text>
+    <line x1="160" y1="160" x2="160" y2="40" class="lv-needle"/>
+    <circle cx="160" cy="160" r="16" class="hub"/>
+  </svg>`;
+}
+function renderPanel(p: PanelPick, byKey: Map<string, Value>) {
+  const parts: Node[] = [];
+  if (p.tacho) {
+    const ref = referenceFor(p.tacho);
+    const hi = ref?.hi ?? 6500;
+    const max = Math.ceil((hi + 500) / 1000) * 1000;
+    const t = h('div', { class: 'lv-tacho', 'data-p': p.tacho, 'data-pt': 'tacho', 'data-max': String(max), 'data-hi': String(hi), role: 'img', 'aria-label': 'Engine speed' });
+    t.innerHTML = tachoSvg(ref?.lo ?? 600, hi, max);
+    parts.push(t);
+  }
+  const lcdItem = (key: string, label: string) => {
+    const v = byKey.get(key);
+    return h('div', { class: 'lv-lcd-item' }, h('span', {}, label), h('b', { 'data-p': key, 'data-pt': 'num' }, '—', h('small', {}, unitText(v?.unit ?? ''))));
+  };
+  if (p.speed || p.gear || p.readout.length) {
+    parts.push(h('div', { class: 'lv-lcd' },
+      p.speed ? h('div', { class: 'lv-lcd-row big' }, h('span', {}, 'SPEED'), h('b', { 'data-p': p.speed, 'data-pt': 'num' }, '—', h('small', {}, unitText(byKey.get(p.speed)?.unit ?? '')))) : null,
+      p.gear ? h('div', { class: 'lv-lcd-row' }, h('span', {}, 'GEAR'), h('b', { 'data-p': p.gear, 'data-pt': 'text' }, '—')) : null,
+      (p.speed || p.gear) && p.readout.length ? h('hr', {}) : null,
+      p.readout.length ? h('div', { class: 'lv-lcd-grid' }, p.readout.map((r) => lcdItem(r.key, r.label))) : null,
+    ));
+  }
+  if (p.bars.length) {
+    parts.push(h('div', { class: 'lv-cols' }, p.bars.map((b) => {
+      const ref = referenceFor(b.key);
+      const band = ref?.lo !== undefined || ref?.hi !== undefined
+        ? `bottom:${pctOf(ref?.lo ?? b.min, b.min, b.max)}%;height:${pctOf(ref?.hi ?? b.max, b.min, b.max) - pctOf(ref?.lo ?? b.min, b.min, b.max)}%`
+        : 'display:none';
+      return h('div', { class: 'lv-col', 'data-p': b.key, 'data-pt': 'bar', 'data-min': String(b.min), 'data-max': String(b.max) },
+        h('span', { class: 'lv-col-label' }, b.label),
+        h('div', { class: 'lv-col-track' }, h('span', { class: 'lv-col-band', style: band }), h('span', { class: 'lv-col-fill' }), h('i', { class: 'lv-col-max' }, formatNumber(b.max)), h('i', { class: 'lv-col-min' }, formatNumber(b.min))),
+        h('b', {}, '—', h('small', {}, ` ${unitText(byKey.get(b.key)?.unit ?? '')}`)));
+    })));
+  }
+  return h('section', { class: 'lv-panel', 'aria-label': 'Instrument panel' }, parts);
+}
+function updatePanel(root: Element, byKey: Map<string, Value>, ctx: EngineContext) {
+  root.querySelectorAll<HTMLElement>('.lv-panel [data-p]').forEach((el) => {
+    const v = byKey.get(el.dataset.p!);
+    if (!v) return;
+    const { state } = evaluate(v.key, v.value, ctx, v.unit);
+    const num = typeof v.value === 'number' ? v.value : NaN;
+    el.classList.toggle('bad', state === 'low' || state === 'high');
+    const type = el.dataset.pt;
+    if (type === 'tacho') {
+      const max = Number(el.dataset.max);
+      const f = Number.isNaN(num) ? 0 : Math.max(0, Math.min(1, num / max));
+      el.querySelector<SVGElement>('.lv-needle')!.style.transform = `rotate(${-135 + 270 * f}deg)`;
+      el.querySelector('.val')!.textContent = fmt(v.value);
+      el.classList.toggle('redline', num >= Number(el.dataset.hi));
+      el.setAttribute('aria-label', `Engine speed ${fmt(v.value)} rpm`);
+    } else if (type === 'bar') {
+      const min = Number(el.dataset.min);
+      const max = Number(el.dataset.max);
+      (el.querySelector('.lv-col-fill') as HTMLElement).style.height = `${Number.isNaN(num) ? 0 : pctOf(num, min, max)}%`;
+      el.querySelector('b')!.firstChild!.textContent = fmt(v.value);
+    } else if (type === 'text') {
+      el.textContent = fmt(v.value);
+    } else {
+      el.firstChild!.textContent = fmt(v.value);
+    }
+  });
 }
 
 function updateLive() {
-  if (!S.live.values.length || !document.querySelector('.dials, .tiles')) return;
-  const st = S.selected ? modState(S.selected) : null;
-  const keys = keyMetrics(st?.scan?.variant ?? '');
-  const { dials } = splitKey(keys);
+  const root = document.querySelector('.lv');
+  if (!root) return;
   const byKey = new Map(S.live.values.map((v) => [v.key, v]));
   const ctx = engineContext(S.live.values);
-  dials.forEach((k, i) => {
-    const v = byKey.get(k);
-    const { state, ref } = evaluate(k, v?.value, ctx);
-    gauges[i]?.update(k, v?.label ?? k, v?.value, v?.unit ?? '', S.live.hist.get(k) ?? [], ref && !(ref.idleOnly && !ctx.idle) ? ref : ref?.idleOnly ? undefined : ref, state);
-  });
-  document.querySelectorAll('.tile[data-k]').forEach((el) => updateTile(el, byKey.get(el.getAttribute('data-k')!), ctx));
-  for (const v of S.live.values) {
-    const el = document.querySelector(`[data-v="${CSS.escape(v.key)}"]`);
-    if (el) el.replaceChildren(fmt(v.value), h('small', {}, v.unit === '-' ? '' : v.unit));
-  }
+  root.querySelectorAll('[data-k]').forEach((el) => { const v = byKey.get(el.getAttribute('data-k')!); if (v) updateCard(el, v, ctx); });
+  root.querySelectorAll('[data-s]').forEach((el) => { const v = byKey.get(el.getAttribute('data-s')!); if (v) updateStateBox(el, v); });
+  updatePanel(root, byKey, ctx);
+  const variant = S.selected ? modState(S.selected).scan?.variant ?? '' : '';
   const chart = document.querySelector<HTMLCanvasElement>('.chart canvas');
-  if (chart) drawChart(chart, dials.map((k, i) => ({ data: S.live.hist.get(k) ?? [], color: COLORS[i] })));
-  const out = keys.concat(S.live.extra).filter((k) => { const s = evaluate(k, byKey.get(k)?.value, ctx).state; return s === 'low' || s === 'high'; });
-  const ctxEl = document.querySelector('#engine-ctx');
-  if (ctxEl) {
-    ctxEl.className = `ctx ${out.length ? 'bad' : ''}`;
-    ctxEl.textContent = `${ctx.idle ? 'Engine at warm idle' : 'Idle-only checks paused'} · ${out.length ? `${out.length} ${out.length === 1 ? 'value' : 'values'} out of range` : 'All checked values in range'}`;
+  if (chart) drawChart(chart, chartKeys(variant).map((k, i) => ({ data: S.live.hist.get(k) ?? [], color: COLORS[i] })));
+  const out = visibleValues(S.live.values).filter((v) => { const s = evaluate(v.key, v.value, ctx, v.unit).state; return s === 'low' || s === 'high'; }).length;
+  const status = document.querySelector('#live-status');
+  if (status) {
+    const n = visibleValues(S.live.values).length;
+    status.replaceChildren(
+      h('span', { class: `led ${S.live.running ? 'live' : ''}` }),
+      S.live.running ? `Live · ${S.live.rate ? `${S.live.rate.toFixed(1)} reads/s · ` : ''}${n} values` : `${S.live.paused ? 'Paused' : 'Stopped'} · ${n} values`,
+      S.live.rec ? h('span', { class: 'rec-note' }, ` · recording, ${S.live.rec.length} rows`) : '',
+      h('span', { class: out ? 'bad' : '' }, ` · ${ctx.idle ? 'warm idle' : 'idle-only checks paused'} · ${out ? `${out} out of range` : 'all checked values in range'}`),
+    );
   }
-  const rate = document.querySelector('#rate');
-  if (rate) rate.textContent = `${S.live.rate.toFixed(1)} reads/s${S.live.rec ? ` · recording, ${S.live.rec.length - 1} rows` : ''}`;
+  const pass = document.querySelector('#live-pass');
+  if (pass) {
+    const p = S.live.pass;
+    pass.textContent = p.total > 3 && p.done < p.total && S.live.running ? `Reading the other value groups for the first time… ${p.done}/${p.total}` : '';
+  }
 }
-
-
-const fmt = (v: number | string | undefined) => (v === undefined ? '—' : typeof v === 'number' ? formatNumber(v) : v);
 
 // ------------------------------------------------------------------ dialogs
 function confirmDialog(title: string, text: string, action: string): Promise<boolean> {
@@ -610,10 +779,7 @@ function go(p: Page) {
 
 function select(g: string) {
   if (S.selected !== g) {
-    stopLive();
-    S.live.values = [];
-    S.live.extra = [];
-    S.live.job = '';
+    resetLive();
     S.jobSel = '';
     S.jobResult = null;
     S.jobFilter = '';
@@ -642,7 +808,6 @@ function renderChips() {
 function renderMain() {
   const main = document.querySelector('main');
   if (!main) return;
-  gauges = [];
   if (S.page === 'overview') return main.replaceChildren(...nodes(renderOverview()));
   if (S.page === 'report') return main.replaceChildren(...nodes(renderReport()));
   if (S.page === 'log') return main.replaceChildren(...nodes(renderLogPage()));
@@ -668,7 +833,7 @@ function renderMain() {
     ),
     ...(S.page === 'faults' ? renderDtcTab(m) : S.page === 'live' ? renderLiveTab(m) : renderJobsTab(m)),
   ]));
-  if (S.page === 'live' && document.querySelector('.dials, .tiles')) updateLive();
+  if (S.page === 'live') updateLive();
   if (S.page === 'functions' && !st.jobs) S.session!.listJobs(st.scan.variant).then((j) => { st.jobs = j; renderMain(); });
 }
 
@@ -727,67 +892,68 @@ function renderLiveTab(m: ModuleDef): (Node | null)[] {
     return [h('div', { class: 'empty' }, 'Loading value groups…')];
   }
   const avail = st.avail;
-  const statusJobs = st.jobs.filter((j) => isLiveGroup(j) && !isHiddenByEquipment(j.name, avail?.equipment) && (!avail || avail.jobs.includes(j.name)));
-  if (S.live.job && !statusJobs.some((j) => j.name === S.live.job)) S.live.job = '';
-  if (!S.live.job) S.live.job = statusJobs.find((j) => /MESSWERTEBLOCK|MESSWERTE$/.test(j.name))?.name ?? statusJobs.find((j) => j.name === 'STATUS_IO_LESEN')?.name ?? statusJobs[0]?.name ?? '';
-  const sel = h('select', { class: 'select', 'aria-label': 'Value group', disabled: S.live.running, onchange: (e: Event) => { S.live.job = (e.target as HTMLSelectElement).value; S.live.values = []; S.live.extra = []; renderMain(); } },
-    statusJobs.map((j) => h('option', { value: j.name, selected: j.name === S.live.job }, j.comment || j.name)));
-  const toolbar = h('div', { class: 'toolbar' },
-    sel,
+  const jobs = liveJobs(st);
+  // everything is read without choosing: start by itself, unless paused or the module is still being checked
+  if (!S.live.running && !S.live.paused && !S.live.error && jobs.length && !st.availProgress && !S.busy && cableOk()) {
+    setTimeout(() => { if (S.selected === m.group && S.page === 'live' && !S.live.running) void startLive(m.group); }, 0);
+  }
+  const toolbar = h('div', { class: 'toolbar lv-toolbar' },
+    h('span', { class: 'lv-status', id: 'live-status' }),
+    h('span', { class: 'grow' }),
     S.live.running
-      ? h('button', { class: 'btn primary', onclick: stopLive }, 'Stop')
-      : h('button', { class: 'btn primary', disabled: !S.live.job || !!S.busy, onclick: () => startLive(m.group) }, 'Start'),
-    h('button', { class: `btn ${S.live.rec ? 'rec' : ''}`, disabled: !S.live.running && !S.live.rec, onclick: toggleRecord }, S.live.rec ? 'Stop & save CSV' : 'Record CSV'),
-    h('span', { class: 'note', id: 'rate' }),
+      ? h('button', { class: 'btn', onclick: pauseLive }, 'Pause')
+      : h('button', { class: 'btn primary', disabled: !jobs.length || !!S.busy || !!st.availProgress || !cableOk(), onclick: () => resumeLive(m.group) }, S.live.values.length ? 'Resume' : 'Start'),
+    h('button', { class: `btn ${S.live.chart ? 'on' : ''}`, 'aria-pressed': S.live.chart ? 'true' : 'false', disabled: !S.live.values.length, onclick: () => { S.live.chart = !S.live.chart; renderMain(); } }, 'Chart'),
+    h('button', { class: `btn ${S.live.rec ? 'rec' : 'rec-idle'}`, disabled: !S.live.running && !S.live.rec, onclick: toggleRecord }, S.live.rec ? 'Stop & save CSV' : 'Record CSV'),
   );
   const availNote = st.availProgress
     ? h('div', { class: 'msg info', 'data-avail': m.group }, `Checking supported data… ${st.availProgress.done}/${st.availProgress.total || '?'}`)
     : avail
-      ? h('p', { class: 'availnote' }, `${statusJobs.length} value ${statusJobs.length === 1 ? 'group' : 'groups'} supported by this ${m.short}${avail.unavailable.length ? ` · ${avail.unavailable.length} not supported (hidden)` : ''}${hiddenEquipment(avail).length ? ` · not fitted: ${hiddenEquipment(avail).join(', ')}` : ''}.`)
+      ? h('p', { class: 'availnote' }, `${jobs.length} value ${jobs.length === 1 ? 'group' : 'groups'} supported by this ${m.short}, all read automatically${avail.unavailable.length ? ` · ${avail.unavailable.length} not supported (hidden)` : ''}${hiddenEquipment(avail).length ? ` · not fitted: ${hiddenEquipment(avail).join(', ')}` : ''}.`)
       : null;
-  if (!S.live.values.length) {
-    return [toolbar, availNote, h('div', { id: 'live-msg' }),
-      h('div', { class: 'empty' }, h('strong', {}, 'Press Start to read live data'), m.short === 'DME' ? 'The 10 key engine values are shown with their normal range for a warm M54. Values outside the range turn red.' : 'The key values of this module are shown first; add any other value to Additional metrics.')];
+  const msg = h('div', { id: 'live-msg' }, S.live.error ? h('div', { class: 'msg err' }, S.live.error) : null);
+  const vals = S.live.values;
+  S.live.sig = liveSig(vals);
+  liveBuiltAt = Date.now();
+  if (!vals.length) {
+    const why = !jobs.length
+      ? 'This module has no live value groups.'
+      : st.availProgress
+        ? 'Live data starts as soon as the check of supported data is done.'
+        : !cableOk()
+          ? 'Plug the cable in to read live data.'
+          : S.live.running
+            ? 'Reading the first values…'
+            : 'Press Start to read live data.';
+    return [toolbar, availNote, msg, h('div', { class: 'lv' }, h('div', { class: 'empty' }, h('strong', {}, S.live.running ? 'Reading live data' : 'Live data'), why))];
   }
-  const keys = keyMetrics(st.scan!.variant!);
-  const { dials, tiles } = splitKey(keys);
-  gauges = dials.map(() => new Gauge());
-  const byKey = new Map(S.live.values.map((v) => [v.key, v]));
-  const extras = S.live.extra.filter((k) => byKey.has(k) && !keys.includes(k));
-  const others = S.live.values.filter((v) => !keys.includes(v.key));
+  const byKey = new Map(vals.map((v) => [v.key, v]));
+  const variant = st.scan!.variant!;
+  const panel = pickPanel(vals);
+  const groups = groupValues(vals, variant);
+  const ck = S.live.chart ? chartKeys(variant) : [];
+  const single = groups.length === 1;
   return [
     toolbar,
     availNote,
-    h('div', { id: 'live-msg' }),
-    h('section', { class: 'zone' },
-      h('div', { class: 'zone-head' }, h('h2', {}, 'Key metrics'), h('span', { class: 'ctx', id: 'engine-ctx' })),
-      dials.length ? h('div', { class: 'dials' }, gauges.map((g) => h('div', { class: 'dw' }, g.root))) : null,
-      tiles.length ? h('div', { class: 'tiles' }, tiles.map((k) => metricTile(k))) : null,
+    msg,
+    h('div', { class: 'lv' },
+      panel ? renderPanel(panel, byKey) : null,
+      ck.length ? h('div', { class: 'chart' }, h('canvas', {}), h('div', { class: 'legend' }, ck.map((k, i) => h('span', {}, h('i', { style: `background:${COLORS[i]}` }), byKey.get(k)?.label ?? k)))) : null,
+      h('p', { class: 'note lv-pass', id: 'live-pass' }),
+      groups.map((g) => h('section', { class: 'lv-group' },
+        h('div', { class: 'lv-group-head' }, h('h2', {}, single ? 'Values' : g.name), h('span', {}, [g.nums.length ? `${g.nums.length} ${g.nums.length === 1 ? 'reading' : 'readings'}` : '', g.texts.length ? `${g.texts.length} ${g.texts.length === 1 ? 'state' : 'states'}` : ''].filter(Boolean).join(' · '))),
+        g.nums.length ? h('div', { class: 'lv-cards' }, g.nums.map(numCard)) : null,
+        g.texts.length ? h('div', { class: 'lv-states' }, g.texts.map(stateBox)) : null,
+      )),
       m.short === 'DME'
-        ? h('p', { class: 'refnote' }, st.scan?.variant === 'native:12'
+        ? h('p', { class: 'refnote' }, variant === 'native:12'
             ? 'Standard OBD-II values. Normal ranges are typical for a warm E46 petrol engine. Ranges marked “at idle” are only checked at warm idle with the car stopped. Values refresh about once per second: OBD-II on the K-line is slow by design.'
-            : 'Normal ranges are reference values for a warm M54 with the MS43. Ranges marked “at idle” are only checked at warm idle with the car stopped. Hover a value for details.')
-        : null,
+            : 'The blue band is the normal range for a warm M54 with the MS43. Ranges marked “at idle” are only checked at warm idle with the car stopped. Hover a value for details.')
+        : h('p', { class: 'refnote' }, 'The blue band is the normal range where one is known. Hover a value for its original name.'),
     ),
-    dials.length ? h('div', { class: 'chart' }, h('canvas', {}), h('div', { class: 'legend' }, dials.map((k, i) => h('span', {}, h('i', { style: `background:${COLORS[i]}` }), byKey.get(k)?.label ?? k)))) : null,
-    h('section', { class: 'zone' },
-      h('div', { class: 'zone-head' }, h('h2', {}, 'Additional metrics'), h('span', { class: 'ctx' }, extras.length ? `${extras.length} selected` : '')),
-      extras.length
-        ? h('div', { class: 'tiles' }, extras.map((k) => metricTile(k, true)))
-        : h('div', { class: 'empty slim' }, 'Tick any value in the list below to follow it here.'),
-    ),
-    others.length
-      ? h('section', { class: 'zone' },
-          h('div', { class: 'zone-head' }, h('h2', {}, `All values · ${others.length}`)),
-          h('div', { class: 'values' }, others.map((v) =>
-            h('label', { class: `vrow ${S.live.extra.includes(v.key) ? 'pinned' : ''}`, title: v.key },
-              h('input', { type: 'checkbox', checked: S.live.extra.includes(v.key), onchange: (e: Event) => toggleExtra(v.key, (e.target as HTMLInputElement).checked) }),
-              h('span', { class: 'k' }, v.label),
-              h('span', { class: 'v', 'data-v': v.key }, fmt(v.value), h('small', {}, v.unit === '-' ? '' : v.unit))))))
-      : null,
   ];
 }
-
 
 
 type JobGroup = 'test' | 'reset' | 'status' | 'dtc' | 'ident' | 'other';

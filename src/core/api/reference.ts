@@ -10,6 +10,8 @@ export interface Reference {
   warmFrom?: number;
   /** Only meaningful at warm idle (engine running, < 1000 rpm, car stopped). */
   idleOnly?: boolean;
+  /** Only applies when the value comes in one of these units (the same name can be a factor in one group and % in another). */
+  units?: string[];
   note: string;
 }
 
@@ -30,10 +32,10 @@ export const REFERENCES: Record<string, Reference> = {
   LMM: { lo: 10, hi: 25, idleOnly: true, note: 'Warm idle ≈ 12–22 kg/h (approximate).' },
   EINSPRITZZEIT: { lo: 1.8, hi: 4.5, idleOnly: true, note: 'Warm idle ≈ 2–4 ms (approximate).' },
   ZUENDWINKEL: { lo: 0, hi: 20, idleOnly: true, note: 'Warm idle ≈ 5–15° before TDC (approximate).' },
-  LAMBDA_INTEGRATOR_1: { lo: 0.9, hi: 1.1, note: 'Fuel trim factor; 1.00 is ideal. Outside ±10 % points to air leaks, MAF or fuel pressure.' },
-  LAMBDA_INTEGRATOR_2: { lo: 0.9, hi: 1.1, note: 'Fuel trim factor; 1.00 is ideal. Outside ±10 % points to air leaks, MAF or fuel pressure.' },
-  INT: { lo: 0.9, hi: 1.1, note: 'Fuel trim factor; 1.00 is ideal.' },
-  INT_2: { lo: 0.9, hi: 1.1, note: 'Fuel trim factor; 1.00 is ideal.' },
+  LAMBDA_INTEGRATOR_1: { lo: 0.9, hi: 1.1, units: ['-', ''], note: 'Fuel trim factor; 1.00 is ideal. Outside ±10 % points to air leaks, MAF or fuel pressure.' },
+  LAMBDA_INTEGRATOR_2: { lo: 0.9, hi: 1.1, units: ['-', ''], note: 'Fuel trim factor; 1.00 is ideal. Outside ±10 % points to air leaks, MAF or fuel pressure.' },
+  INT: { lo: 0.9, hi: 1.1, units: ['-', ''], note: 'Fuel trim factor; 1.00 is ideal.' },
+  INT_2: { lo: 0.9, hi: 1.1, units: ['-', ''], note: 'Fuel trim factor; 1.00 is ideal.' },
   LL_STELLER_TV: { lo: 20, hi: 45, idleOnly: true, note: 'Idle valve duty at warm idle ≈ 25–40 % (approximate). High = dirty valve or air leak.' },
   VANOS_NW_LAGE_EINLASS: { lo: 80, hi: 120, note: 'Intake VANOS range 80–120 °KW.' },
   VANOS_NW_LAGE_AUSLASS: { lo: -105, hi: -80, note: 'Exhaust VANOS range 80–105 °KW (shown negative).' },
@@ -73,16 +75,18 @@ export function baseKey(name: string) {
     .replace(/_MWB$/, '');
 }
 
-export function referenceFor(key: string): Reference | undefined {
-  return REFERENCES[baseKey(key)];
+export function referenceFor(key: string, unit?: string): Reference | undefined {
+  const ref = REFERENCES[baseKey(key)];
+  if (ref?.units && unit !== undefined && !ref.units.includes(unit)) return undefined;
+  return ref;
 }
 
 export interface EngineContext {
   idle: boolean; // engine running at warm idle, car stopped
 }
 
-export function evaluate(key: string, value: number | string | undefined, ctx: EngineContext): { state: RefState; ref?: Reference } {
-  const ref = referenceFor(key);
+export function evaluate(key: string, value: number | string | undefined, ctx: EngineContext, unit?: string): { state: RefState; ref?: Reference } {
+  const ref = referenceFor(key, unit);
   if (!ref || typeof value !== 'number') return { state: 'na', ref };
   if (ref.idleOnly && !ctx.idle) return { state: 'na', ref };
   if (ref.lo !== undefined && value < ref.lo) return { state: ref.warmFrom !== undefined && value < ref.warmFrom ? 'cold' : 'low', ref };

@@ -81,9 +81,11 @@ Quando o comando `zip` existe, o script também gera `release/E46Fanatics Scan.z
 
 ## Live data
 
-- **Key metrics:** as 10 principais medições de cada módulo ficam sempre visíveis (4 relógios + 6 cartões), com a faixa normal desenhada e destaque em vermelho quando algo sai da faixa.
+- **Tudo sem escolher:** ao abrir a aba, a leitura começa sozinha e mostra todos os valores do módulo. O bloco principal (`STATUS_MESSWERTEBLOCK` na DME, `STATUS_IO_LESEN` no EGS) é lido a cada ciclo; os outros grupos suportados entram um por ciclo, em rodízio (todos a cada ciclo quando são até 3). Valores repetidos entre grupos (`STAT_X`/`STATUS_X`, `_MWB`, `TEMP`/`TEMPERATUR`) aparecem uma vez só.
+- **Painel no topo** (desenho próprio, não é o painel da BMW): conta-giros, velocidade, marcha (EGS), 4 leituras e duas colunas de temperatura (água/óleo, ou óleo do câmbio).
+- **Grupos** (Engine, Air & fuel, Ignition & VANOS, Temperatures, Electrical, Heaters & A/C, Transmission, Cruise control, Wheels & brakes, Other values): números em cartões com barra, faixa normal em azul e marcador âmbar; textos e On/Off em caixas simples. Fora da faixa, o cartão fica vermelho. Regras em `src/core/api/livelayout.ts`.
 - **Faixas de referência** (`src/core/api/reference.ts`) para o M54/MS43: corte a 6.500 rpm, VANOS 80–120 / 80–105 °KW e pulso de injeção ≈ 3,5–5 ms (documentação técnica BMW), termostato de mapa 100–110 °C carga parcial / 85–95 °C carga total. Valores marcados como aproximados são típicos de oficina. Faixas "at idle" só são verificadas em marcha lenta, motor quente e carro parado.
-- **Additional metrics:** qualquer outro valor marcado na lista passa a ser acompanhado em destaque.
+- **Pause / Chart / Record CSV:** o gráfico mostra as 4 principais medições; o CSV grava todos os valores lidos.
 
 ## Segurança: o que o programa faz no carro
 
