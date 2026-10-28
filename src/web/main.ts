@@ -677,13 +677,25 @@ function confirmDialog(title: string, text: string, action: string): Promise<boo
 }
 
 // ------------------------------------------------------------------ rendering
+/** Bar at the bottom of every screen: version, author, AI note. */
+function renderAppBar() {
+  return h('footer', { class: 'appbar' },
+    h('span', { class: 'appbar-mark', 'aria-hidden': 'true' }),
+    h('span', {}, h('b', {}, 'E46Fanatics Scan'), ` v${__APP_VERSION__}`, h('small', {}, ` · build ${__APP_BUILD__}`)),
+    h('span', { class: 'appbar-sep', 'aria-hidden': 'true' }),
+    h('span', {}, 'Developed by ', h('b', {}, 'Fabricio Guimarães')),
+    h('span', { class: 'appbar-sep', 'aria-hidden': 'true' }),
+    h('span', { class: 'appbar-ai' }, 'Built with artificial intelligence'),
+  );
+}
+
 function render() {
   const top = renderTop();
   if (!S.session) {
-    app.replaceChildren(top, liquidBackdrop(), renderSetup(), renderLog());
+    app.replaceChildren(top, liquidBackdrop(), renderSetup(), renderLog(), renderAppBar());
     return;
   }
-  app.replaceChildren(top, h('div', { class: 'layout' }, h('nav', { class: 'rail', 'aria-label': 'Sections' }), h('main', {})));
+  app.replaceChildren(top, h('div', { class: 'layout' }, h('nav', { class: 'rail', 'aria-label': 'Sections' }), h('main', {})), renderAppBar());
   renderRail();
   renderMain();
 }
