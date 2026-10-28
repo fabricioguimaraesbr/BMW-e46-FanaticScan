@@ -12,6 +12,8 @@ export interface Reference {
   idleOnly?: boolean;
   /** Only applies when the value comes in one of these units (the same name can be a factor in one group and % in another). */
   units?: string[];
+  /** Only checked while the engine runs (engine speed is 0 with the key on and the engine off). */
+  runningOnly?: boolean;
   note: string;
 }
 
@@ -19,7 +21,7 @@ export type RefState = 'ok' | 'low' | 'high' | 'cold' | 'na';
 
 /** Keys are value bases (see baseKey): MS43 data block and single STATUS jobs share them. */
 export const REFERENCES: Record<string, Reference> = {
-  MOTORDREHZAHL: { lo: 600, hi: 6500, note: 'Warm idle ≈ 700 rpm. Fuel cut-off at 6,500 rpm.' },
+  MOTORDREHZAHL: { lo: 600, hi: 6500, runningOnly: true, note: 'Warm idle ≈ 700 rpm. Fuel cut-off at 6,500 rpm.' },
   MOTORTEMP: { lo: 80, hi: 113, warmFrom: 80, note: 'Map thermostat: 100–110 °C part load, 85–95 °C full load. Fully open at 113 °C.' },
   MOTORTEMPERATUR: { lo: 80, hi: 113, warmFrom: 80, note: 'Map thermostat: 100–110 °C part load, 85–95 °C full load. Fully open at 113 °C.' },
   OEL_TEMP: { lo: 70, hi: 130, warmFrom: 70, note: 'Typical 90–120 °C when warm (approximate).' },
@@ -43,7 +45,7 @@ export const REFERENCES: Record<string, Reference> = {
   KUEHLW_AUSL_TEMP: { hi: 113, note: 'Radiator outlet; lower than engine temperature while the thermostat is closed.' },
   KUEHLW_AUSL_TEMPERATUR: { hi: 113, note: 'Radiator outlet; lower than engine temperature while the thermostat is closed.' },
   // OBD-II (plug-and-play mode, any E46 petrol engine)
-  OBD_0C: { lo: 550, hi: 7000, note: 'Warm idle ≈ 650–800 rpm depending on engine.' },
+  OBD_0C: { lo: 550, hi: 7000, runningOnly: true, note: 'Warm idle ≈ 650–800 rpm depending on engine.' },
   OBD_05: { lo: 80, hi: 113, warmFrom: 80, note: 'Normal 85–110 °C when warm.' },
   OBD_0F: { lo: -25, hi: 60, note: 'Close to outside temperature; up to ~60 °C after heat soak.' },
   OBD_10: { lo: 2.5, hi: 8, idleOnly: true, note: 'Warm idle ≈ 3–7 g/s for a 1.9–3.0 l six or four (approximate).' },
@@ -83,12 +85,15 @@ export function referenceFor(key: string, unit?: string): Reference | undefined 
 
 export interface EngineContext {
   idle: boolean; // engine running at warm idle, car stopped
+  /** false when the engine speed reads 0 (key on, engine off); undefined = unknown */
+  running?: boolean;
 }
 
 export function evaluate(key: string, value: number | string | undefined, ctx: EngineContext, unit?: string): { state: RefState; ref?: Reference } {
   const ref = referenceFor(key, unit);
   if (!ref || typeof value !== 'number') return { state: 'na', ref };
   if (ref.idleOnly && !ctx.idle) return { state: 'na', ref };
+  if (ref.runningOnly && ctx.running === false) return { state: 'na', ref };
   if (ref.lo !== undefined && value < ref.lo) return { state: ref.warmFrom !== undefined && value < ref.warmFrom ? 'cold' : 'low', ref };
   if (ref.hi !== undefined && value > ref.hi) return { state: 'high', ref };
   return { state: 'ok', ref };
@@ -101,5 +106,5 @@ export function engineContext(values: { key: string; value: number | string }[])
   const speed = get('GESCHWINDIGKEIT') ?? get('OBD_0D');
   const temp = get('MOTORTEMP') ?? get('MOTORTEMPERATUR') ?? get('OBD_05');
   const idle = typeof rpm === 'number' && rpm > 450 && rpm < 1000 && (typeof speed !== 'number' || speed < 3) && (typeof temp !== 'number' || temp >= 75);
-  return { idle };
+  return { idle, running: typeof rpm === 'number' ? rpm > 300 : undefined };
 }

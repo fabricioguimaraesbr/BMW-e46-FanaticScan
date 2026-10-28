@@ -2,6 +2,7 @@
 // Used for the demo mode and automated tests. Answers are DS2 payloads (status byte 0xA0 = OK).
 
 import type { SimEcu } from './SimChannel';
+import { DriveCycle } from './drive';
 
 const ascii = (s: string) => [...s].map((c) => c.charCodeAt(0));
 
@@ -63,51 +64,30 @@ const u16 = (v: number) => {
 };
 const u8 = (v: number) => Math.max(0, Math.min(255, Math.round(v)));
 
-const T0 = Date.now();
-
 function encodeDtc(code: string): [number, number] {
   const sys = 'PCBU'.indexOf(code[0]);
   const n = parseInt(code.slice(1), 16);
   return [(sys << 6) | ((n >> 8) & 0x3f), n & 0xff];
 }
 
-/** Shared engine model: 30 s cycle of idle → acceleration → cruise → deceleration. */
-function engineState() {
-  const t = (Date.now() - T0) / 1000;
-  const phase = (t % 30) / 30;
-  const rev = phase < 0.3 ? 0 : phase < 0.5 ? (phase - 0.3) / 0.2 : phase < 0.8 ? 0.45 : 0.45 * (1 - (phase - 0.8) / 0.2);
-  const rpm = 720 + rev * 4800 + Math.sin(t * 7) * 15;
-  const pedal = rev * 60;
-  const speed = phase < 0.4 ? 0 : Math.min(110, (phase - 0.4) * 400);
-  const clt = Math.min(92, 60 + t * 0.8);
-  return {
-    rpm, speed, pedal, throttle: 2.5 + pedal * 1.1,
-    maf: 13 + rev * 380, iat: 34 + Math.sin(t / 9) * 2, clt, oil: clt + 4, cltOut: clt - 6,
-    inj: 2.6 + rev * 9, vanosIn: 95 - rev * 30, vanosOut: -100 + rev * 15, kl15: 14.1,
-    lambda1: 1 + Math.sin(t * 1.3) * 0.03, lambda2: 1 + Math.cos(t * 1.1) * 0.03,
-    load: 140 + rev * 380, pressure: 935, ubatt: 14.1 + Math.sin(t / 3) * 0.05,
-    atf: Math.min(85, 45 + t * 0.6),
-  };
-}
-
 /** GS8.60.4: STATUS_IO_LESEN (0B 03) driven by the engine model. */
 class Gs8604 extends DtcEcu {
+  drive = new DriveCycle(340);
   protected status(d: Uint8Array): number[] {
     if (d[0] === 0x0b && d[1] === 0x03) {
-      const e = engineState();
-      const gear = e.speed < 1 ? 1 : e.speed < 20 ? 1 : e.speed < 40 ? 2 : e.speed < 65 ? 3 : e.speed < 90 ? 4 : 5;
-      const out = e.speed * 26;
+      const e = this.drive.state();
+      const gear = e.gear;
       const b = new Array(30).fill(0);
       b[0] = u8(e.rpm / 32);
-      b[1] = u8((e.speed < 1 ? e.rpm * 0.6 : e.rpm * 0.98) / 32);
-      b[2] = u8(out / 32);
-      b[3] = u8(e.throttle / 0.39);
+      b[1] = u8(e.turbine / 32);
+      b[2] = u8(e.output / 32);
+      b[3] = u8(e.pedal / 0.39);
       b[4] = u8(e.load / 4 / 4);
       b[5] = u8(e.clt + 48);
       b[6] = u8(e.atf + 40);
       b[7] = u8(e.ubatt / 0.0808);
       for (let i = 8; i < 12; i++) b[i] = u8((e.speed * 8.2) / 16);
-      for (let i = 12; i < 16; i++) b[i] = 0x10;
+      for (let i = 12; i < 16; i++) b[i] = e.running ? 0x10 : 0;
       b[20] = gear << 5;
       return [0xa0, ...b];
     }
@@ -117,7 +97,7 @@ class Gs8604 extends DtcEcu {
 
 /** MS43 with a simple engine model (idle → rev → cruise cycle) for live data. */
 class Ms43 extends DtcEcu {
-  constructor() {
+  constructor(readonly drive: DriveCycle) {
     super(
       0x12,
       'DME MS43',
@@ -140,13 +120,13 @@ class Ms43 extends DtcEcu {
     return [0xa0, ...body];
   }
   engine() {
-    return engineState();
+    return this.drive.state();
   }
   /** OBD-II / EOBD view of the same engine (supported PIDs like an EU MS43). */
   obdStored: string[] = [];
   obdPending: string[] = [];
   handleObd(req: Uint8Array): number[][] | null {
-    const e = engineState();
+    const e = this.drive.state();
     const sid = req[0];
     if (sid === 0x01) {
       const pid = req[1];
@@ -168,14 +148,14 @@ class Ms43 extends DtcEcu {
         0x0b: [Math.round(30 + (e.load / 520) * 70)],
         0x0c: [(Math.round(e.rpm * 4) >> 8) & 0xff, Math.round(e.rpm * 4) & 0xff],
         0x0d: [Math.round(e.speed)],
-        0x0e: [Math.round((10 + (e.rpm - 720) / 300 + 64) * 2)],
+        0x0e: [Math.round((e.ign + 64) * 2)],
         0x0f: [Math.round(e.iat + 40)],
         0x10: [(Math.round((e.maf / 3.6) * 100) >> 8) & 0xff, Math.round((e.maf / 3.6) * 100) & 0xff],
         0x11: [Math.round((e.throttle / 100) * 255)],
         0x13: [0x33],
-        0x14: [Math.round((0.45 + Math.sin(Date.now() / 300) * 0.35) * 200), t((e.lambda1 - 1) * 100)],
+        0x14: [Math.round((e.running ? 0.45 + Math.sin(Date.now() / 300) * 0.35 : 0.45) * 200), t((e.lambda1 - 1) * 100)],
         0x15: [Math.round(0.68 * 200), 0xff],
-        0x18: [Math.round((0.45 + Math.cos(Date.now() / 280) * 0.35) * 200), t((e.lambda2 - 1) * 100)],
+        0x18: [Math.round((e.running ? 0.45 + Math.cos(Date.now() / 280) * 0.35 : 0.45) * 200), t((e.lambda2 - 1) * 100)],
         0x19: [Math.round(0.66 * 200), 0xff],
         0x1c: [0x06],
         0x1f: [0x01, 0x2c],
@@ -224,7 +204,9 @@ class Ms43 extends DtcEcu {
       put(25, [u8(e.kl15 / 0.10156)]);
       put(26, u16(0x8000 + (e.lambda1 - 1) / 1.526e-5));
       put(28, u16(0x8000 + (e.lambda2 - 1) / 1.526e-5));
+      for (let i = 30; i <= 33; i++) put(i, [u8(e.o2heat / 0.391)]);
       put(34, u16(e.load / 0.0212));
+      put(40, [u8(e.fan / 0.3906)]);
       put(41, u16(e.pressure / 0.08292));
       put(43, [u8(e.ubatt / 0.10156)]);
       return [0xa0, ...b];
@@ -233,15 +215,20 @@ class Ms43 extends DtcEcu {
   }
 }
 
-export function createE46(opts: { obdStored?: string[]; obdPending?: string[] } = {}): SimEcu[] {
-  const dme = new Ms43();
+/**
+ * The simulated car. Engine and gearbox follow one drive cycle (see drive.ts). By default it starts at warm idle
+ * (tests); the app passes a cycle that starts with the key on and the engine off.
+ */
+export function createE46(opts: { obdStored?: string[]; obdPending?: string[]; drive?: DriveCycle } = {}): SimEcu[] {
+  const drive = opts.drive ?? new DriveCycle(340);
+  const dme = new Ms43(drive);
   dme.obdStored = opts.obdStored ?? [];
   dme.obdPending = opts.obdPending ?? [];
   return [
     dme,
-    new Gs8604(0x32, 'EGS GS8.60.4', ident({ bmw: '7548312', hw: '2H', cod: '00', diag: '11', bus: '60', week: '02', year: '01', sw: '22' }), [
+    Object.assign(new Gs8604(0x32, 'EGS GS8.60.4', ident({ bmw: '7548312', hw: '2H', cod: '00', diag: '11', bus: '60', week: '02', year: '01', sw: '22' }), [
       { code: 0x61, type: 0xc1 },
-    ], 19),
+    ], 19), { drive }),
     // MK20 uses a binary ident: BMW-Nr as hex nibbles, then HW, COD, DIAG, BUS, day, month, year, supplier, SW
     new DtcEcu(0x56, 'ASC MK20', [0xa0, 0x06, 0x75, 0x17, 0x67, 0x06, 0x04, 0x69, 0x60, 0x06, 0x11, 0x04, 0x33, ...new Array(27).fill(0)], [
       { code: 0x94, type: 0x37 },

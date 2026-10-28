@@ -11,12 +11,14 @@ import { EngineContext, KEY_METRICS, RefState, Reference, baseKey, engineContext
 import { PanelPick, barScale, sameValueId, groupValues, isFlag, kindOf, pickPanel, visibleValues } from '../core/api/livelayout';
 import type { JobResponse } from '../core/ediabas/Ediabas';
 import { createE46 } from '../core/sim/e46';
+import { DriveCycle } from '../core/sim/drive';
 import { NativeSession } from '../core/native/NativeSession';
 import { SimChannel } from '../core/sim/SimChannel';
 import type { ByteChannel } from '../core/transport/ByteChannel';
 import { ObdInterface } from '../core/transport/ObdInterface';
 import { toHex } from '../core/util/numbers';
 import { BrowserFileProvider } from './BrowserFileProvider';
+import { liquidBackdrop } from './backdrop';
 import { drawChart } from './chart';
 import { formatNumber } from './gauge';
 import logoSvg from './assets/e46fanatics.svg?raw';
@@ -134,12 +136,15 @@ const CABLE_TEXT: Record<CablePill, [string, string]> = {
 };
 const CAR_TEXT = { ok: ['ok', 'Car responding'], noanswer: ['warn', 'Car not responding'], idle: ['off', 'Car —'] } as const;
 
+/** The simulated trip (key on → cold start → city → motorway → top speed → idle → off, repeating). */
+let simDrive: DriveCycle | null = null;
+
 function statusPills() {
   const [cc, ct] = CABLE_TEXT[cableState()];
   const [rc, rt] = CAR_TEXT[carState()];
   const simToggle = S.mode === 'sim' ? () => { const ch = S.channel as SimChannel; if (ch.state === 'connected') ch.unplug(); else void ch.plug(); } : undefined;
   return h('div', { class: 'pills', id: 'pills' },
-    h(simToggle ? 'button' : 'span', { class: `pill ${cc}`, onclick: simToggle, title: simToggle ? 'Simulator: click to unplug / plug the virtual cable' : S.session ? S.channel?.name ?? '' : preCable.name || 'Connect the cable to the USB port' }, h('span', { class: `led ${cc}` }), ct),
+    h(simToggle ? 'button' : 'span', { class: `pill ${cc}`, onclick: simToggle, title: simToggle ? 'Simulator: click to unplug / plug the virtual cable' : S.session ? S.channel?.name ?? '' : preCable.name || 'Connect the cable to the USB port' }, h('span', { class: `led ${cc}` }), ct, simToggle && simDrive && cableState() === 'sim' ? h('small', { class: 'pill-sub' }, simDrive.phaseAt(simDrive.time)) : null),
     S.session ? h('span', { class: `pill ${rc}`, title: 'K-line: whether the car answers. No answer usually means the ignition is off. On the E46 the K+DCAN cable must join OBD pins 7 and 8 (switch position for older cars), otherwise only the engine and transmission answer.' }, h('span', { class: `led ${rc}` }), rt) : null,
   );
 }
@@ -151,7 +156,7 @@ setInterval(updatePills, 2000);
 async function connect(mode: 'cable' | 'sim') {
   S.connError = '';
   try {
-    const ch = mode === 'sim' ? new SimChannel(createE46()) : await WebSerialChannel.request();
+    const ch = mode === 'sim' ? new SimChannel(createE46({ drive: (simDrive = new DriveCycle(0)) })) : await WebSerialChannel.request();
     const iface = new ObdInterface(ch, {
       onTraffic: (d, b) => log(d, `${d === 'tx' ? '→' : d === 'rx' ? '←' : '·'} ${typeof b === 'string' ? b : toHex(b)}`),
       onLink: (s) => {
@@ -643,7 +648,7 @@ function updateLive() {
       h('span', { class: `led ${S.live.running ? 'live' : ''}` }),
       S.live.running ? `Live · ${S.live.rate ? `${S.live.rate.toFixed(1)} reads/s · ` : ''}${n} values` : `${S.live.paused ? 'Paused' : 'Stopped'} · ${n} values`,
       S.live.rec ? h('span', { class: 'rec-note' }, ` · recording, ${S.live.rec.length} rows`) : '',
-      h('span', { class: out ? 'bad' : '' }, ` · ${ctx.idle ? 'warm idle' : 'idle-only checks paused'} · ${out ? `${out} out of range` : 'all checked values in range'}`),
+      h('span', { class: out ? 'bad' : '' }, ` · ${ctx.running === false ? 'engine off' : ctx.idle ? 'warm idle' : 'idle-only checks paused'} · ${out ? `${out} out of range` : 'all checked values in range'}`),
     );
   }
   const pass = document.querySelector('#live-pass');
@@ -675,7 +680,7 @@ function confirmDialog(title: string, text: string, action: string): Promise<boo
 function render() {
   const top = renderTop();
   if (!S.session) {
-    app.replaceChildren(top, renderSetup(), renderLog());
+    app.replaceChildren(top, liquidBackdrop(), renderSetup(), renderLog());
     return;
   }
   app.replaceChildren(top, h('div', { class: 'layout' }, h('nav', { class: 'rail', 'aria-label': 'Sections' }), h('main', {})));
@@ -708,7 +713,6 @@ function renderTop() {
   return h('header', { class: 'top' },
     h('div', { class: 'brand' }, logo(), h('div', { class: 'prod' }, h('b', {}, 'Scan'), h('small', {}, 'BMW E46 diagnostics'))),
     h('div', { class: 'spacer' }),
-    S.session && S.mods.size ? null : h('span', { class: 'meta' }, files.count ? `${files.count} module files` : 'Plug & play'),
     S.session && S.mods.size ? h('div', { class: 'car' }, h('b', {}, carTitle()), h('small', {}, carSummary())) : null,
     statusPills(),
     S.session ? h('button', { class: 'btn ghost', onclick: disconnect }, 'Disconnect') : null,
@@ -721,22 +725,19 @@ function renderSetup() {
     logo('hero-logo'),
     h('h1', {}, 'BMW E46 diagnostics'),
     h('p', { class: 'lede' }, 'Read and clear fault codes, watch live data and run module tests with your K+DCAN or BMW Scanner cable.'),
-    h('ol', { class: 'steps' },
-      h('li', { class: files.count ? 'done' : '' },
-        h('h2', {}, 'Module files'),
-        files.count
-          ? h('p', {}, `${files.count} module files loaded from the `, h('code', {}, 'modulos'), ' folder: fault memory, live data and tests for every module that has its file. Modules without a file still work in plug & play mode.')
-          : h('p', {}, 'None loaded: plug & play mode. The engine is read over OBD-II (faults, live data) and every module is identified. To read every module, put the module files in the ', h('code', {}, 'modulos'), ' folder and open the app with “Abrir no Windows” or “Abrir no Mac”.'),
-      ),
-      h('li', {},
+    h('div', { class: 'start' },
+      h('div', { class: 'start-card' },
         h('h2', {}, 'Connect to the car'),
-        h('p', {}, `Plug the cable into the OBD port and turn the key to position 2. On a K+DCAN cable, use K-line mode (switch or bridge pins 7 and 8). ${files.count ? 'Full mode with module files.' : 'Plug-and-play mode: engine over OBD-II, all modules identified.'}`),
+        h('p', {}, 'Plug the cable into the OBD port and turn the key to position 2. On a K+DCAN cable, use K-line mode with OBD pins 7 and 8 joined (the switch position that does it depends on the cable).'),
+        files.count ? null : h('p', { class: 'start-note' }, 'No module files in the modulos folder: plug & play mode (engine over OBD-II, every module identified).'),
         S.connError ? h('div', { class: 'msg err' }, S.connError) : null,
         !hasSerial ? h('div', { class: 'msg warn' }, 'This browser cannot access USB ports. Use Chrome or Edge on Mac or Windows to connect the cable. The simulator works in any browser.') : null,
-        h('div', { class: 'row' },
-          h('button', { class: 'btn primary', disabled: !hasSerial, onclick: () => connect('cable') }, 'Connect cable'),
-          h('button', { class: 'btn', onclick: () => connect('sim') }, 'Use simulator'),
-        ),
+        h('button', { class: 'btn primary', disabled: !hasSerial, onclick: () => connect('cable') }, 'Connect cable'),
+      ),
+      h('div', { class: 'start-card' },
+        h('h2', {}, 'Simulator'),
+        h('p', {}, 'A simulated 325i on a 6½-minute trip that repeats: key on, cold start, warm-up at idle, city traffic, motorway and a run to top speed, warm idle, engine off.'),
+        h('button', { class: 'btn', onclick: () => connect('sim') }, 'Start simulator'),
       ),
     ),
   );

@@ -9,7 +9,7 @@ O que ele faz hoje:
 - **Mostra dados em tempo real**, com painel em destaque, gráfico e gravação em CSV. No MS43, o bloco `STATUS_MESSWERTEBLOCK` traz 28 valores do motor por leitura.
 - **Executa as funções dos módulos** (testes, atuações e leituras), como o Tool32: qualquer job do arquivo, com argumentos.
 - **Gera um relatório** do carro: identificação dos módulos e lista de erros.
-- **Tem um simulador** do seu 325i, montado com os dados dos seus logs do BMW Scanner, para testar sem o carro.
+- **Tem um simulador** do seu 325i, montado com os dados dos seus logs do BMW Scanner, para testar sem o carro. Ele roda uma viagem de 6,5 minutos que se repete: chave ligada com motor frio, partida, aquecimento em marcha lenta, cidade com trocas de marcha e semáforos, estrada e arrancada até a velocidade máxima, marcha lenta quente e motor desligado (`src/core/sim/drive.ts`). A fase atual aparece ao lado de "Simulator" no topo.
 
 ## Dois modos
 
@@ -42,7 +42,7 @@ Quem vai usar o programa (Windows ou Mac, inclusive M1) **não precisa instalar 
 
 1. Extraia o `E46Fanatics Scan.zip`.
 2. Windows: rode `Criar atalho na Area de Trabalho.bat` uma vez e use o ícone (ou `Abrir no Windows.bat`). Mac: botão direito em `Abrir no Mac.command` > Abrir (só na primeira vez).
-3. **Connect cable** e escolha a porta FTDI na janela do Chrome. Ou **Use simulator** para testar sem o carro.
+3. **Connect cable** e escolha a porta FTDI na janela do Chrome. Ou **Start simulator** para testar sem o carro.
 
 O Safari e o Firefox não têm Web Serial; neles só o simulador funciona.
 
