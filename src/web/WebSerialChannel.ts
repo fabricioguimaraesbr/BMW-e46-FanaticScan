@@ -129,7 +129,17 @@ export class WebSerialChannel extends QueuedChannel {
 
   async open(cfg: SerialConfig) {
     this.lastCfg = cfg;
-    await this.port.open({ baudRate: cfg.baudRate, parity: cfg.parity, dataBits: cfg.dataBits, stopBits: cfg.stopBits, bufferSize: 4096 });
+    const opts = { baudRate: cfg.baudRate, parity: cfg.parity, dataBits: cfg.dataBits, stopBits: cfg.stopBits, bufferSize: 4096 };
+    try {
+      await this.port.open(opts);
+    } catch (e) {
+      // "The port is already open": a previous close did not finish (seen on macOS when the line settings change).
+      // Close what is left and open again instead of failing the job.
+      if (!/already open/i.test(String((e as Error)?.message ?? e))) throw e;
+      await this.port.close().catch(() => undefined);
+      await new Promise((r) => setTimeout(r, 50));
+      await this.port.open(opts);
+    }
     this.open_ = true;
     this.reader = this.port.readable!.getReader();
     const reader = this.reader;
@@ -161,7 +171,24 @@ export class WebSerialChannel extends QueuedChannel {
     }
     await this.pump;
     this.reader = null;
-    await this.port.close();
+    // "The port is already closed" (BMWeb #260, macOS): the port is closed, which is what we wanted
+    await this.port.close().catch((e: unknown) => {
+      if (!/already closed|not open/i.test(String((e as Error)?.message ?? e))) throw e;
+    });
+  }
+
+  /** New line settings (DS2 9600 8E1 ↔ BMW-FAST 115200 8N1 ↔ OBD-II 10400 8N1): close and reopen, with retries. */
+  async reconfigure(cfg: SerialConfig) {
+    await this.close().catch(() => undefined);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await this.open(cfg);
+        return;
+      } catch (e) {
+        if (attempt >= 2 || this.state === 'unplugged') throw e;
+        await new Promise((r) => setTimeout(r, 120));
+      }
+    }
   }
 
   async write(data: Uint8Array) {

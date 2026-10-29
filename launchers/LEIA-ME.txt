@@ -24,6 +24,9 @@ PRECISA DE
    esta ligando os pinos 7 e 8. A numeracao da chave muda de cabo para cabo:
    teste as posicoes (com o cabo fora do carro) ou meca com multimetro qual
    posicao liga os pinos 7 e 8. Trocar a posicao nao tem risco para o carro.
+   Se nenhum modulo responder mesmo com a chave certa, abra "Cable options" na
+   tela inicial e ligue "K+DCAN line control (DTR)". Deixe desligado se o carro
+   ja le normalmente.
 3. Driver do cabo:
    - Windows: normalmente o proprio Windows instala (o cabo aparece como "USB Serial Port (COMx)"
      no Gerenciador de Dispositivos). Se o INPA ja funciona nesse PC, esta tudo certo.
@@ -59,4 +62,13 @@ VERSAO DE TESTE
 ---------------
 O OBD-II na linha K e lento por natureza: no modo plug & play os valores do motor
 atualizam cerca de 1 vez por segundo.
-Se algo nao funcionar, abra "Communication log" (rodape) e envie o conteudo.
+Se algo nao funcionar, clique em "Report a problem" (topo) e envie o arquivo que
+ele salva (o numero do chassi vai mascarado). Ou abra "Communication log" e envie o conteudo.
+
+NOVO NA 1.2
+-----------
+- DME MS45 (M54 2003+), ME9 (318i N42/N46) e airbag MRS5 com os arquivos dos modulos.
+- Garage: guarda os scans de cada carro e mostra o que mudou entre dois scans.
+- Data Logger: valores de varios modulos ao mesmo tempo (motor + cambio), com CSV.
+- Service: resets de adaptacao, sangria do ABS, corte de injetor e autotestes, com
+  as condicoes a confirmar antes.

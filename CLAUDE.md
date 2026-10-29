@@ -17,11 +17,11 @@ Ferramenta de diagnóstico do BMW E46 que roda no navegador (Chrome/Edge, via We
 ## Comandos
 - `npm install`
 - `npm run dev`: abre em http://localhost:5173 (Chrome/Edge para o cabo; o simulador funciona em qualquer navegador).
-- `ECU_DIR=/caminho/para/EDIABAS/Ecu npm test`: 34 testes. Os que precisam dos arquivos da BMW são pulados sem `ECU_DIR`.
+- `ECU_DIR=/caminho/para/EDIABAS/Ecu npm test`: 51 testes. Os que precisam dos arquivos da BMW são pulados sem `ECU_DIR`.
 - `npm run typecheck`
 - `npx tsx scripts/build-offline.ts`: gera `release/E46Fanatics Scan/` (pacote Windows/Mac com atalhos) e `release/E46Fanatics Scan - Mac/` (o `E46Fanatics Scan.app`), mais os zips.
 - `node design/build-mockups.mjs`: regenera as 3 propostas visuais.
 
 ## Arquitetura (resumo)
-`Web Serial → WebSerialChannel → ObdInterface (DS2) / Iso9141 (OBD-II) → Ediabas (interpretador BEST/2) ou NativeSession → DiagSession / HybridSession → UI (src/web/main.ts)`.
-Detalhes em `README.md` (seção Estrutura).
+`Web Serial → WebSerialChannel → ObdInterface (DS2, KWP2000*, BMW-FAST) / Iso9141 (OBD-II) → Ediabas (interpretador BEST/2) ou NativeSession → DiagSession / HybridSession → UI (src/web/main.ts)`.
+Telas extras em arquivos próprios: `src/web/garagePage.ts`, `loggerPage.ts`, `servicePage.ts` (recebem um `PageCtx`, `src/web/ctx.ts`). Detalhes em `README.md` (seção Estrutura).

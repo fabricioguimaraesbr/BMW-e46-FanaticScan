@@ -9,6 +9,11 @@ O que ele faz hoje:
 - **Mostra dados em tempo real**, com painel em destaque, gráfico e gravação em CSV. No MS43, o bloco `STATUS_MESSWERTEBLOCK` traz 28 valores do motor por leitura.
 - **Executa as funções dos módulos** (testes, atuações e leituras), como o Tool32: qualquer job do arquivo, com argumentos.
 - **Gera um relatório** do carro: identificação dos módulos e lista de erros.
+- **Garage:** guarda cada carro (pelo número do chassi, quando algum módulo informa) com o histórico de scans, e compara dois scans: erros novos, apagados e que continuam. Fica no navegador, com exportação/importação em arquivo; abre também sem o carro, pela tela inicial.
+- **Data Logger:** grava valores de vários módulos ao mesmo tempo (por exemplo motor e câmbio), com gráfico, presets, até 20 minutos de histórico e CSV.
+- **Service:** procedimentos guiados do E46 (resets de adaptação da DME e do câmbio, sangria do ABS/DSC, teste da bomba do ABS, corte de injetor, autoteste do painel e do LCM), com as condições a confirmar antes. Os que gravam permanentemente aparecem bloqueados, com o motivo.
+- **Report a problem:** salva um arquivo JSON com a versão, o navegador, as telas e funções da sessão e os últimos telegramas da linha K, com o chassi mascarado. Nada é enviado: a pessoa anexa o arquivo onde quiser.
+- **Protocolos da linha K:** DS2 (quase todos os módulos do E46), KWP2000\* (DME MS45 dos M54 2003+, ME9 dos 318i N42/N46) e BMW-FAST (airbag MRS5), além do OBD-II.
 - **Tem um simulador** do seu 325i, montado com os dados dos seus logs do BMW Scanner, para testar sem o carro. Ele roda uma viagem de 6,5 minutos que se repete: chave ligada com motor frio, partida, aquecimento em marcha lenta, cidade com trocas de marcha e semáforos, estrada e arrancada até a velocidade máxima, marcha lenta quente e motor desligado (`src/core/sim/drive.ts`). A fase atual aparece ao lado de "Simulator" no topo.
 
 ## Dois modos
@@ -44,7 +49,7 @@ Quem vai usar o programa (Windows ou Mac, inclusive M1) **não precisa instalar 
 2. Windows: rode `Criar atalho na Area de Trabalho.bat` uma vez e use o ícone (ou `Abrir no Windows.bat`). Mac: botão direito em `Abrir no Mac.command` > Abrir (só na primeira vez).
 3. **Connect cable** e escolha a porta FTDI na janela do Chrome. Ou **Start simulator** para testar sem o carro.
 
-O Safari e o Firefox não têm Web Serial; neles só o simulador funciona.
+O Safari e o Firefox não têm Web Serial; neles só o simulador funciona. No simulador dá para escolher o carro: o 325i 2001 (MS43, DS2) ou um 325i 2004 (MS45 em KWP2000\* e airbag MRS5).
 
 ### Cabo
 
@@ -53,6 +58,8 @@ O Safari e o Firefox não têm Web Serial; neles só o simulador funciona.
 - **Feche o INPA e o BMW Scanner antes**: só um programa pode usar a porta por vez.
 - **No Mac** o macOS já tem driver FTDI. Se o cabo não aparecer na lista, instale o driver VCP da FTDI.
 - **No Windows** a porta já funciona se o INPA funciona (hoje está como `COM7`).
+- **Cable options → K+DCAN line control (DTR):** liga o DTR só durante o envio na linha K, como o EDIABAS faz com cabos K+DCAN. Desligado por padrão (o seu cabo lê o carro assim). Use só se nenhum módulo responder com a chave do cabo na posição certa. Também fica na página Log durante a conexão.
+- **Cabo lento:** se aparecerem várias respostas truncadas seguidas, o programa avisa para ajustar o "latency timer" do FTDI para 1 ms (no Windows: Gerenciador de Dispositivos → porta → Avançado).
 
 ## Publicar na web
 
@@ -99,7 +106,7 @@ Toda função dos arquivos da BMW é classificada (`src/core/api/safety.ts`) e a
 | Resets | `ADAPT_*_LOESCHEN`, `RESET_ADAPTION` | bloqueado até "Unlock tests & resets" |
 | Escrita permanente | codificação, EEPROM/flash, sincronização EWS (`MEHRFACHSTARTWERTABGLEICH`, `STEUERN_SYNC_MODE`), `*_PROGRAMMIEREN`, `*_SCHREIBEN` | sempre bloqueado e escondido |
 
-Funções desconhecidas são tratadas como escrita (bloqueadas).
+Funções desconhecidas são tratadas como escrita (bloqueadas). Além do nome, o programa lê a descrição da função no arquivo da BMW: um "teste" ou "reset" descrito como gravação (por exemplo `STEUERN_SELBSTTEST` do EWS, que grava no transponder da chave, ou `STEUERN_*_PROGRAMM` da ME9) é tratado como escrita.
 
 ## Indicadores de conexão
 
@@ -132,6 +139,8 @@ Os testes rodam o fluxo completo (interpretador + camada do cabo + carro simulad
 
 - a identificação dos módulos;
 - os textos dos erros, contra os seus logs do BMW Scanner;
+- KWP2000\* e BMW-FAST (enquadramento, checksums, "response pending", controle de DTR) e o MS45/MRS5 de ponta a ponta pelos arquivos da BMW;
+- Garage (comparação de scans, exportação), relatório de problema (chassi mascarado) e procedimentos de serviço;
 - o apagamento da memória de erros;
 - a leitura em tempo real;
 - o funcionamento com cabo com e sem eco.
@@ -142,16 +151,16 @@ Os testes rodam o fluxo completo (interpretador + camada do cabo + carro simulad
 | --- | --- |
 | `src/core/prg` | Leitor dos arquivos `.prg`/`.grp` (tabelas, jobs, documentação) |
 | `src/core/ediabas` | Interpretador BEST/2 (equivalente ao EDIABAS) |
-| `src/core/transport` | Protocolo DS2 sobre linha K (`ObdInterface`) e abstração da porta serial |
-| `src/core/sim` | Simulador byte a byte do E46 (MS43, GS8.60.4, ASC MK20) |
-| `src/core/api` | Sessão de diagnóstico, lista de módulos do E46, tradução dos textos de erro para inglês |
+| `src/core/transport` | DS2, KWP2000\* e BMW-FAST sobre linha K (`ObdInterface`) e abstração da porta serial |
+| `src/core/sim` | Simulador byte a byte do E46 (MS43 ou MS45, GS8.60.4, ASC MK20, MRS5) |
+| `src/core/api` | Sessão de diagnóstico, módulos do E46, tradução, Garage (`garage.ts`), relatório (`report.ts`), procedimentos (`service.ts`) |
 | `src/web` | Interface, Web Serial, armazenamento dos arquivos no navegador |
 | `scripts/` | Ferramentas de engenharia reversa: disassembler de jobs, sondas de resposta |
 
 ## Limitações conhecidas
 
 - **Ainda não foi testado no carro.** Tudo foi validado contra o simulador, que foi construído a partir dos formatos que os próprios arquivos `.prg` esperam e dos seus logs. Os tempos reais do cabo podem pedir ajuste (`extraTimeout` em `ObdInterface`). Se algo falhar, abra a página **Log** no menu lateral e envie o que aparecer (botão "Save log").
-- Só o conceito DS2 (6) está implementado. Isso cobre 58 dos 59 arquivos da sua pasta. O `MRS5` (airbag mais novo, KWP2000 a 115200) fica para depois.
+- KWP2000\* (MS45, ME9) e BMW-FAST (MRS5) foram validados só no simulador; nenhum desses carros foi lido ainda. Os resets de adaptação da MS45/ME9 pedem argumentos (`ADAP_SELEKTIV_LOESCHEN`) e ainda não estão na tela Service.
 - A interface é em inglês. Erros, funções e valores da DME, do câmbio e do ABS foram traduzidos do alemão (`src/core/api/i18n-en.ts` e `i18n-jobs.ts`); nos outros módulos a tradução é aproximada (glossário), e o texto original em alemão aparece no detalhe do erro.
 - As telas do INPA (`.IPO`) não são executadas; as telas equivalentes foram refeitas a partir dos jobs.
 
@@ -159,9 +168,9 @@ Os testes rodam o fluxo completo (interpretador + camada do cabo + carro simulad
 
 1. Testar no carro e ajustar tempos.
 2. Telas dedicadas para o câmbio (adaptações, temperatura do óleo, marcha) e ABS (sensores de roda).
-3. Reset de adaptações (DME / EGS) e testes guiados (VANOS, sonda lambda, injetores).
+3. Testes guiados com acompanhamento de valores (VANOS, sonda lambda).
 4. Codificação com backup obrigatório antes de qualquer gravação.
 
 ## Licença
 
-GPL-3.0. O interpretador segue a semântica documentada pelo projeto aberto [EdiabasLib](https://github.com/uholeschak/ediabaslib) (GPLv3), de Ulrich Holeschak.
+GPL-3.0. O interpretador segue a semântica documentada pelo projeto aberto [EdiabasLib](https://github.com/uholeschak/ediabaslib) (GPLv3), de Ulrich Holeschak. Várias melhorias da versão 1.2 (KWP2000\*/BMW-FAST na linha K, DTR como liberação de transmissão no K+DCAN, relatório de problema, Garage, gravação multi-módulo, procedimentos de serviço) vieram de ideias e notas técnicas do [BMWeb](https://github.com/dader34/BMWeb) (GPLv3), de dader34; o código daqui foi escrito para este projeto.

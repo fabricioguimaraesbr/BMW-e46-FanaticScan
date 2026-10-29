@@ -238,3 +238,6 @@ bmbt46tn.prg
 bmbt_mir.prg
 bmbtr50.prg
 bordmoni.prg
+T_PCOD.PRG
+T_AUSB.prg
+t_scod.prg

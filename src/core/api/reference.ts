@@ -44,6 +44,16 @@ export const REFERENCES: Record<string, Reference> = {
   LUFTDRUCK: { lo: 850, hi: 1060, note: 'Ambient pressure; lower at altitude (São Paulo ≈ 920 hPa).' },
   KUEHLW_AUSL_TEMP: { hi: 113, note: 'Radiator outlet; lower than engine temperature while the thermostat is closed.' },
   KUEHLW_AUSL_TEMPERATUR: { hi: 113, note: 'Radiator outlet; lower than engine temperature while the thermostat is closed.' },
+  // MS45 (M54 from 2003, Siemens names; KWP2000*)
+  NMOT: { lo: 600, hi: 6500, runningOnly: true, note: 'Warm idle ≈ 700 rpm. Fuel cut-off at 6,500 rpm.' },
+  TMOT: { lo: 80, hi: 113, warmFrom: 80, note: 'Map thermostat: 100–110 °C part load, 85–95 °C full load.' },
+  TANS: { lo: -25, hi: 60, note: 'Close to outside temperature; up to ~60 °C after heat soak.' },
+  UB: { lo: 12.4, hi: 14.8, note: 'Engine running 13.5–14.5 V. Engine off 12.4–12.8 V.' },
+  MSHFM: { lo: 10, hi: 25, idleOnly: true, note: 'Warm idle ≈ 12–22 kg/h (approximate).' },
+  TE: { lo: 1.8, hi: 4.5, idleOnly: true, note: 'Warm idle ≈ 2–4 ms (approximate).' },
+  ZWOUT: { lo: 0, hi: 20, idleOnly: true, note: 'Warm idle ≈ 5–15° before TDC (approximate).' },
+  WNWKWE: { lo: 80, hi: 120, note: 'Intake VANOS range 80–120 °KW.' },
+  TKA: { hi: 113, note: 'Radiator outlet; lower than engine temperature while the thermostat is closed.' },
   // OBD-II (plug-and-play mode, any E46 petrol engine)
   OBD_0C: { lo: 550, hi: 7000, runningOnly: true, note: 'Warm idle ≈ 650–800 rpm depending on engine.' },
   OBD_05: { lo: 80, hi: 113, warmFrom: 80, note: 'Normal 85–110 °C when warm.' },
@@ -64,6 +74,7 @@ export const REFERENCES: Record<string, Reference> = {
 /** Default key metrics per module (value bases, in display order). The first 4 numeric ones become dials. */
 export const KEY_METRICS: Record<string, string[]> = {
   ms430ds0: ['MOTORDREHZAHL', 'MOTORTEMP', 'OEL_TEMP', 'UBATT', 'AN_LUFTTEMP', 'LMM_MASSE', 'EINSPRITZZEIT', 'ZUENDWINKEL', 'LAMBDA_INTEGRATOR_1', 'LAMBDA_INTEGRATOR_2'],
+  ms450ds0: ['NMOT', 'TMOT', 'TANS', 'UB', 'MSHFM', 'TE', 'ZWOUT', 'WNWKWE', 'FR', 'FR2'],
   gs8604: ['GETRIEBETEMPERATUR', 'STEGDREHZAHL', 'ABTRIEBSDREHZAHL', 'UBAT', 'GANG', 'WAEHLHEBEL_POSITION', 'MOTORTEMPERATUR', 'DKG', 'LAST', 'ADAPT_PROG'],
   'native:12': ['OBD_0C', 'OBD_05', 'OBD_0F', 'OBD_0D', 'OBD_04', 'OBD_10', 'OBD_0E', 'OBD_06', 'OBD_07', 'OBD_11'],
   ascmk20: ['RAD_GESCHW_VL', 'RAD_GESCHW_VR', 'RAD_GESCHW_HL', 'RAD_GESCHW_HR', 'BREMSLICHT_SCHALTER', 'ASC_TASTER'],
@@ -102,9 +113,9 @@ export function evaluate(key: string, value: number | string | undefined, ctx: E
 /** Detects warm idle from the values of the current read. */
 export function engineContext(values: { key: string; value: number | string }[]): EngineContext {
   const get = (b: string) => values.find((v) => baseKey(v.key) === b)?.value;
-  const rpm = get('MOTORDREHZAHL') ?? get('OBD_0C');
-  const speed = get('GESCHWINDIGKEIT') ?? get('OBD_0D');
-  const temp = get('MOTORTEMP') ?? get('MOTORTEMPERATUR') ?? get('OBD_05');
+  const rpm = get('MOTORDREHZAHL') ?? get('NMOT') ?? get('OBD_0C');
+  const speed = get('GESCHWINDIGKEIT') ?? get('VFZG') ?? get('OBD_0D');
+  const temp = get('MOTORTEMP') ?? get('MOTORTEMPERATUR') ?? get('TMOT') ?? get('OBD_05');
   const idle = typeof rpm === 'number' && rpm > 450 && rpm < 1000 && (typeof speed !== 'number' || speed < 3) && (typeof temp !== 'number' || temp >= 75);
   return { idle, running: typeof rpm === 'number' ? rpm > 300 : undefined };
 }

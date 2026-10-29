@@ -120,17 +120,17 @@ export function barScale(v: Value, hist: number[] = []): { min: number; max: num
 // ------------------------------------------------------------------ instrument panel
 /** Values the instrument panel looks for (value bases, first one found wins). */
 export const PANEL = {
-  tacho: ['MOTORDREHZAHL', 'OBD_0C'],
-  speed: ['GESCHWINDIGKEIT', 'FAHRZEUGGESCHWINDIGKEIT', 'V_FZG', 'OBD_0D'],
+  tacho: ['MOTORDREHZAHL', 'NMOT', 'OBD_0C'],
+  speed: ['GESCHWINDIGKEIT', 'FAHRZEUGGESCHWINDIGKEIT', 'V_FZG', 'VFZG', 'OBD_0D'],
   gear: ['GANG'],
   readout: [
-    ['UBATT', 'Battery'], ['UBAT', 'Battery'], ['KL15', 'Battery'], ['OBD_42', 'Battery'],
-    ['AN_LUFTTEMP', 'Intake air'], ['OBD_0F', 'Intake air'],
-    ['EINSPRITZZEIT', 'Injection'], ['LMM_MASSE', 'Air mass'], ['OBD_10', 'Air mass'], ['OBD_04', 'Load'],
+    ['UBATT', 'Battery'], ['UBAT', 'Battery'], ['KL15', 'Battery'], ['UB', 'Battery'], ['OBD_42', 'Battery'],
+    ['AN_LUFTTEMP', 'Intake air'], ['TANS', 'Intake air'], ['OBD_0F', 'Intake air'],
+    ['EINSPRITZZEIT', 'Injection'], ['TE', 'Injection'], ['LMM_MASSE', 'Air mass'], ['MSHFM', 'Air mass'], ['OBD_10', 'Air mass'], ['OBD_04', 'Load'],
     ['STEGDREHZAHL', 'Turbine'], ['ABTRIEBSDREHZAHL', 'Output shaft'], ['DKG', 'Throttle'], ['LAST', 'Load'], ['LUFTDRUCK', 'Air pressure'],
   ] as [string, string][],
   bars: [
-    ['COOLANT', ['MOTORTEMP', 'MOTORTEMPERATUR', 'OBD_05'], 40, 130],
+    ['COOLANT', ['MOTORTEMP', 'MOTORTEMPERATUR', 'TMOT', 'OBD_05'], 40, 130],
     ['OIL', ['OEL_TEMP', 'OEL_TEMPERATUR'], 40, 150],
     ['GEARBOX OIL', ['GETRIEBETEMPERATUR'], 0, 150],
   ] as [string, string[], number, number][],

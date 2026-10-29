@@ -15,7 +15,12 @@ import { DriveCycle } from '../core/sim/drive';
 import { NativeSession } from '../core/native/NativeSession';
 import { SimChannel } from '../core/sim/SimChannel';
 import type { ByteChannel } from '../core/transport/ByteChannel';
-import { ObdInterface } from '../core/transport/ObdInterface';
+import { DtrMode, ObdInterface } from '../core/transport/ObdInterface';
+import { buildReport } from '../core/api/report';
+import type { PageCtx } from './ctx';
+import { loadGarage, renderGarage, saveCurrentScan } from './garagePage';
+import { loggerRunning, renderLogger, resetLogger, stopLogger } from './loggerPage';
+import { renderService, resetService } from './servicePage';
 import { toHex } from '../core/util/numbers';
 import { BrowserFileProvider } from './BrowserFileProvider';
 import { liquidBackdrop } from './backdrop';
@@ -23,26 +28,11 @@ import { drawChart } from './chart';
 import { formatNumber } from './gauge';
 import logoSvg from './assets/e46fanatics.svg?raw';
 import { WebSerialChannel, watchCable, webSerialAvailable } from './WebSerialChannel';
-
-// ------------------------------------------------------------------ tiny DOM helper
-type Child = Node | string | number | null | undefined | false;
-function h<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string, unknown> = {}, ...kids: (Child | Child[] | Child[][])[]): HTMLElementTagNameMap[K] {
-  const el = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (v === undefined || v === null || v === false) continue;
-    if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2), v as EventListener);
-    else if (k === 'class') el.className = String(v);
-    else if (k in el && typeof v !== 'string') (el as unknown as Record<string, unknown>)[k] = v;
-    else el.setAttribute(k, v === true ? '' : String(v));
-  }
-  for (const c of kids.flat(2) as Child[]) if (c !== null && c !== undefined && c !== false) el.append(c instanceof Node ? c : String(c));
-  return el;
-}
-const nodes = (xs: (Node | null | false | undefined)[]) => xs.filter((x): x is Node => !!x);
+import { confirmDialog, download, h, nodes, stamp, store } from './dom';
 
 // ------------------------------------------------------------------ state
 /** Sections of the side menu. Module pages (faults, live, functions) show the module tabs on top. */
-type Page = 'overview' | 'faults' | 'live' | 'functions' | 'report' | 'log';
+type Page = 'overview' | 'faults' | 'live' | 'functions' | 'service' | 'logger' | 'garage' | 'report' | 'log';
 const MODULE_PAGES: Page[] = ['faults', 'live', 'functions'];
 interface ModState {
   scan?: ScanEntry;
@@ -60,6 +50,15 @@ interface ModState {
 const files = new BrowserFileProvider();
 const S = {
   session: null as Session | null,
+  iface: null as ObdInterface | null,
+  /** K+DCAN line control, remembered in this browser */
+  dtrMode: store.get<DtrMode>('e46diag.dtrMode', 'off'),
+  /** which car the simulator plays */
+  simEngine: store.get<'ms43' | 'ms45'>('e46diag.simEngine', 'ms43'),
+  /** the cable looks slow (FTDI latency timer) */
+  hint: '' as '' | 'latency',
+  /** the Garage opened from the start screen (no car connected) */
+  garageOffline: false,
   channel: null as ByteChannel | null,
   mode: null as 'cable' | 'sim' | null,
   busy: '' as string,
@@ -156,8 +155,13 @@ setInterval(updatePills, 2000);
 async function connect(mode: 'cable' | 'sim') {
   S.connError = '';
   try {
-    const ch = mode === 'sim' ? new SimChannel(createE46({ drive: (simDrive = new DriveCycle(0)) })) : await WebSerialChannel.request();
+    const ch = mode === 'sim' ? new SimChannel(createE46({ drive: (simDrive = new DriveCycle(0)), engine: S.simEngine, mrs5: S.simEngine === 'ms45' })) : await WebSerialChannel.request();
     const iface = new ObdInterface(ch, {
+      dtrMode: mode === 'sim' ? 'off' : S.dtrMode,
+      onHint: (k) => {
+        S.hint = k;
+        renderMain();
+      },
       onTraffic: (d, b) => log(d, `${d === 'tx' ? '→' : d === 'rx' ? '←' : '·'} ${typeof b === 'string' ? b : toHex(b)}`),
       onLink: (s) => {
         if (s === 'answer') link.lastAnswer = Date.now();
@@ -173,6 +177,8 @@ async function connect(mode: 'cable' | 'sim') {
       renderMain();
     };
     S.channel = ch;
+    S.iface = iface;
+    S.hint = '';
     S.mode = mode;
     link.lastAnswer = link.lastNoAnswer = 0;
     const onJob = (r: JobResponse, ms: number) => log('job', `${r.sgbd}.${r.job} — ${r.error ? r.error.text : jobStatus(r.resultSets) || 'OK'} (${ms} ms)`);
@@ -189,7 +195,7 @@ async function connect(mode: 'cable' | 'sim') {
     });
     // module files for what is in the "modulos" folder, plug & play for anything missing
     S.session = files.count ? new HybridSession(new DiagSession({ files, iface, onJob }), native, () => iface.resetLine()) : native;
-    log('info', `Connected: ${ch.name} · ${S.session.kind === 'native' ? 'plug-and-play mode (no module files)' : `${files.count} module files, plug & play for the rest`}`);
+    log('info', `Connected: ${ch.name} · ${S.session.kind === 'native' ? 'plug-and-play mode (no module files)' : `${files.count} module files, plug & play for the rest`}${mode === 'cable' && S.dtrMode === 'kdcan' ? ' · K+DCAN line control on' : ''}`);
     render();
     scan();
   } catch (e) {
@@ -201,6 +207,9 @@ async function connect(mode: 'cable' | 'sim') {
 
 async function disconnect() {
   stopLive();
+  stopLogger();
+  resetLogger();
+  resetService();
   S.session?.abort();
   if (S.session instanceof NativeSession) S.session.iso.stopKeepAlive();
   if (S.session instanceof HybridSession) S.session.native.iso.stopKeepAlive();
@@ -208,6 +217,7 @@ async function disconnect() {
   await S.channel?.close().catch(() => undefined);
   S.session = null;
   S.channel = null;
+  S.iface = null;
   S.mode = null;
   S.mods.clear();
   S.selected = null;
@@ -658,24 +668,6 @@ function updateLive() {
   }
 }
 
-// ------------------------------------------------------------------ dialogs
-function confirmDialog(title: string, text: string, action: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const d = h('dialog', {},
-      h('h2', {}, title),
-      h('p', {}, text),
-      h('div', { class: 'row' },
-        h('button', { class: 'btn', onclick: () => { d.close(); resolve(false); } }, 'Cancel'),
-        h('button', { class: 'btn danger', onclick: () => { d.close(); resolve(true); } }, action),
-      ),
-    );
-    d.addEventListener('cancel', () => resolve(false));
-    document.body.append(d);
-    d.showModal();
-    d.addEventListener('close', () => d.remove());
-  });
-}
-
 // ------------------------------------------------------------------ rendering
 /** Bar at the bottom of every screen: version, author, AI note. */
 function renderAppBar() {
@@ -692,6 +684,10 @@ function renderAppBar() {
 function render() {
   const top = renderTop();
   if (!S.session) {
+    if (S.garageOffline) {
+      app.replaceChildren(top, h('div', { class: 'layout single' }, h('main', {}, ...nodes(renderGarage(ctx, true, () => { S.garageOffline = false; render(); })))), renderAppBar());
+      return;
+    }
     app.replaceChildren(top, liquidBackdrop(), renderSetup(), renderLog(), renderAppBar());
     return;
   }
@@ -727,8 +723,73 @@ function renderTop() {
     h('div', { class: 'spacer' }),
     S.session && S.mods.size ? h('div', { class: 'car' }, h('b', {}, carTitle()), h('small', {}, carSummary())) : null,
     statusPills(),
+    h('button', { class: 'btn ghost', onclick: openReport, title: 'Save a file that explains a problem: app version, what was done and the last telegrams (VIN masked)' }, 'Report a problem'),
     S.session ? h('button', { class: 'btn ghost', onclick: disconnect }, 'Disconnect') : null,
   );
+}
+
+// ------------------------------------------------------------------ cable options, hints, problem report
+function setDtrMode(m: DtrMode) {
+  S.dtrMode = m;
+  store.set('e46diag.dtrMode', m);
+  if (S.iface && S.mode === 'cable') S.iface.dtrMode = m;
+  log('info', m === 'kdcan' ? 'K+DCAN line control on: DTR is raised while sending on the K-line' : 'K+DCAN line control off: DTR and RTS stay low');
+}
+
+function cableOptions() {
+  return h('details', { class: 'cable-opts' },
+    h('summary', {}, 'Cable options'),
+    h('label', { class: 'opt' },
+      h('input', { type: 'checkbox', checked: S.dtrMode === 'kdcan', onchange: (e: Event) => { setDtrMode((e.target as HTMLInputElement).checked ? 'kdcan' : 'off'); render(); } }),
+      h('span', {}, h('b', {}, 'K+DCAN line control (DTR)'), h('small', {}, 'Raises DTR while sending, the way EDIABAS drives K+DCAN cables. Try it only if no module answers with the cable switch in the right position; leave it off when the car already reads.'))),
+  );
+}
+
+function renderHint() {
+  if (S.hint !== 'latency') return null;
+  return h('div', { class: 'msg warn hint' },
+    h('b', {}, 'The cable answers late or garbled. '),
+    'On Windows set the FTDI latency timer to 1 ms: Device Manager → Ports → USB Serial Port → Properties → Port Settings → Advanced → Latency Timer. On a Mac the driver usually does it already; try another USB port without a hub. ',
+    h('button', { class: 'btn ghost', onclick: () => { S.hint = ''; renderMain(); } }, 'Dismiss'));
+}
+
+function reportData(description: string) {
+  return buildReport({
+    app: __APP_VERSION__,
+    build: __APP_BUILD__,
+    userAgent: navigator.userAgent,
+    platform: (navigator as unknown as { platform?: string }).platform ?? '',
+    description,
+    page: S.session ? `${S.page}${S.selected ? ` · ${moduleDef(S.selected).short}` : ''}` : 'start',
+    cable: S.channel?.name ?? (preCable.present ? preCable.name : 'none'),
+    mode: S.mode ?? 'not connected',
+    settings: { dtrMode: S.dtrMode, moduleFiles: files.count, safety: S.session?.safetyMode ?? 'read', simulator: S.mode === 'sim' ? S.simEngine : undefined },
+    log: S.log,
+    modules: E46_MODULES.filter((m) => S.mods.get(m.group)?.scan).map((m) => {
+      const st = S.mods.get(m.group)!;
+      return { short: m.short, variant: st.scan!.variant, ident: st.scan!.ident, faults: st.dtcs?.length, error: st.scan!.error ?? st.dtcError };
+    }),
+  });
+}
+
+function openReport() {
+  const text = h('textarea', { rows: 4, placeholder: 'What happened? Which module, what did you press, what did you expect?', 'aria-label': 'Problem description', class: 'dlg-input' });
+  const status = h('p', { class: 'note' });
+  const close = () => d.close();
+  const d = h('dialog', { class: 'report-dlg' },
+    h('h2', {}, 'Report a problem'),
+    h('p', {}, 'Saves a file with the app version, your browser, the screens and jobs of this session and the last telegrams on the K-line. The VIN is masked. Nothing is sent: attach the file to your post or message.'),
+    text,
+    status,
+    h('div', { class: 'row' },
+      h('button', { class: 'btn', onclick: close }, 'Close'),
+      h('button', { class: 'btn', onclick: async () => { try { await navigator.clipboard.writeText(JSON.stringify(reportData(text.value), null, 1)); status.textContent = 'Copied to the clipboard.'; } catch { status.textContent = 'The browser did not allow copying; use Save file.'; } } }, 'Copy'),
+      h('button', { class: 'btn primary', onclick: () => { download(`e46-problem-report-${stamp()}.json`, JSON.stringify(reportData(text.value), null, 1), 'application/json'); status.textContent = 'Saved to your downloads.'; } }, 'Save file')),
+  );
+  document.body.append(d);
+  d.showModal();
+  d.addEventListener('close', () => d.remove());
+  text.focus();
 }
 
 function renderSetup() {
@@ -744,12 +805,22 @@ function renderSetup() {
         files.count ? null : h('p', { class: 'start-note' }, 'No module files in the modulos folder: plug & play mode (engine over OBD-II, every module identified).'),
         S.connError ? h('div', { class: 'msg err' }, S.connError) : null,
         !hasSerial ? h('div', { class: 'msg warn' }, 'This browser cannot access USB ports. Use Chrome or Edge on Mac or Windows to connect the cable. The simulator works in any browser.') : null,
+        cableOptions(),
         h('button', { class: 'btn primary', disabled: !hasSerial, onclick: () => connect('cable') }, 'Connect cable'),
       ),
       h('div', { class: 'start-card' },
         h('h2', {}, 'Simulator'),
-        h('p', {}, 'A simulated 325i on a 6½-minute trip that repeats: key on, cold start, warm-up at idle, city traffic, motorway and a run to top speed, warm idle, engine off.'),
+        h('p', {}, 'A simulated E46 on a 6½-minute trip that repeats: key on, cold start, warm-up at idle, city traffic, motorway and a run to top speed, warm idle, engine off.'),
+        h('label', { class: 'opt sim-pick' }, h('span', {}, 'Car'),
+          h('select', { 'aria-label': 'Simulated car', onchange: (e: Event) => { S.simEngine = (e.target as HTMLSelectElement).value as 'ms43' | 'ms45'; store.set('e46diag.simEngine', S.simEngine); } },
+            h('option', { value: 'ms43', selected: S.simEngine === 'ms43' }, '325i 2001 · MS43 (DS2)'),
+            h('option', { value: 'ms45', selected: S.simEngine === 'ms45' }, '325i 2004 · MS45 (KWP2000) + MRS5 airbag'))),
         h('button', { class: 'btn', onclick: () => connect('sim') }, 'Start simulator'),
+      ),
+      h('div', { class: 'start-card' },
+        h('h2', {}, 'Garage'),
+        h('p', {}, (() => { const g = loadGarage(); const n = g.cars.reduce((k, c) => k + c.scans.length, 0); return g.cars.length ? `${g.cars.length} ${g.cars.length === 1 ? 'car' : 'cars'} and ${n} saved ${n === 1 ? 'scan' : 'scans'}. Look back at past scans and compare them without the car.` : 'Saved cars and their scan history. Scan a car and save it to compare later scans with it.'; })()),
+        h('button', { class: 'btn', onclick: () => { S.garageOffline = true; render(); } }, 'Open garage'),
       ),
     ),
   );
@@ -763,7 +834,7 @@ function statusOf(st: ModState | undefined): { cls: string; text: string } {
   return st.dtcs.length ? { cls: 'fault', text: `${st.dtcs.length} ${st.dtcs.length === 1 ? 'fault' : 'faults'}` } : { cls: 'ok', text: 'OK' };
 }
 
-const PAGES: [Page, string][] = [['overview', 'Overview'], ['faults', 'Faults'], ['live', 'Live Data'], ['functions', 'Tests & Functions'], ['report', 'Report'], ['log', 'Log']];
+const PAGES: [Page, string][] = [['overview', 'Overview'], ['faults', 'Faults'], ['live', 'Live Data'], ['functions', 'Tests & Functions'], ['service', 'Service'], ['logger', 'Data Logger'], ['garage', 'Garage'], ['report', 'Report'], ['log', 'Log']];
 const foundModules = () => E46_MODULES.filter((m) => S.mods.get(m.group)?.scan?.variant);
 
 /** Side menu: sections of the app, safety state at the bottom. */
@@ -784,6 +855,7 @@ function renderRail() {
 
 function go(p: Page) {
   if (p !== 'live') stopLive();
+  if (p !== 'logger') stopLogger();
   if (MODULE_PAGES.includes(p) && !S.selected) S.selected = foundModules()[0]?.group ?? null;
   S.page = p;
   renderRail();
@@ -821,9 +893,14 @@ function renderChips() {
 function renderMain() {
   const main = document.querySelector('main');
   if (!main) return;
-  if (S.page === 'overview') return main.replaceChildren(...nodes(renderOverview()));
-  if (S.page === 'report') return main.replaceChildren(...nodes(renderReport()));
-  if (S.page === 'log') return main.replaceChildren(...nodes(renderLogPage()));
+  const banner = renderHint();
+  const put = (xs: (Node | null)[]) => main.replaceChildren(...nodes([banner, ...xs]));
+  if (S.page === 'overview') return put(renderOverview());
+  if (S.page === 'service') return put(renderService(ctx));
+  if (S.page === 'logger') return put(renderLogger(ctx));
+  if (S.page === 'garage') return put(renderGarage(ctx));
+  if (S.page === 'report') return put(renderReport());
+  if (S.page === 'log') return put(renderLogPage());
   if (!S.selected || !modState(S.selected).scan?.variant) S.selected = foundModules()[0]?.group ?? null;
   if (!S.selected) {
     return main.replaceChildren(renderChips(),
@@ -836,13 +913,14 @@ function renderMain() {
   const idItem = (label: string, v: unknown) => (v !== undefined && v !== '' ? h('div', {}, h('dt', {}, label), h('dd', {}, String(v))) : null);
   const title = S.page === 'faults' ? 'Fault memory' : S.page === 'live' ? 'Live data' : 'Tests & functions';
   main.replaceChildren(...nodes([
+    banner,
     renderChips(),
     h('div', { class: 'mh' },
       h('div', {}, h('p', { class: 'kicker' }, `${m.name} · ${variantLabel(st.scan.variant)} · 0x${hex2(m.address)}`), h('h1', {}, `${title} · ${m.short}`)),
       h('dl', { class: 'ident' },
         idItem('BMW part no.', id.ID_BMW_NR), idItem('Hardware', id.ID_HW_NR), idItem('Software', id.ID_SW_NR),
         idItem('Coding index', id.ID_COD_INDEX), idItem('Diag index', id.ID_DIAG_INDEX),
-        id.ID_DATUM_KW !== undefined ? idItem('Built (wk/yr)', `${id.ID_DATUM_KW}/${id.ID_DATUM_JAHR}`) : null),
+        id.ID_DATUM_KW !== undefined ? idItem('Built (wk/yr)', `${id.ID_DATUM_KW}/${id.ID_DATUM_JAHR}`) : idItem('Date', id.ID_DATUM)),
     ),
     ...(S.page === 'faults' ? renderDtcTab(m) : S.page === 'live' ? renderLiveTab(m) : renderJobsTab(m)),
   ]));
@@ -877,7 +955,7 @@ function renderDtcTab(m: ModuleDef): (Node | null)[] {
 }
 
 function dtcItem(d: Dtc) {
-  const tags = [d.present === true ? 'Present' : d.present === false ? 'Not present now' : '', d.frequency !== null ? `Seen ${d.frequency}×` : ''].filter(Boolean);
+  const tags = [d.present === true ? 'Present' : d.present === false ? 'Not present now' : '', d.frequency !== null ? `Seen ${d.frequency}×` : '', d.pcode ?? ''].filter(Boolean);
   return h('details', { class: 'dtc' },
     h('summary', {},
       h('span', { class: 'code' }, dtcCode(d)),
@@ -1117,7 +1195,9 @@ function renderLogPage(): (Node | null)[] {
     h('div', { class: 'toolbar' },
       h('button', { class: 'btn', onclick: () => { void navigator.clipboard?.writeText(S.log.map((l) => l.text).join('\n')); } }, 'Copy log'),
       h('button', { class: 'btn', onclick: () => h('a', { href: URL.createObjectURL(new Blob([S.log.map((l) => l.text).join('\n')], { type: 'text/plain' })), download: `e46-log-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.txt` }).click() }, 'Save log'),
-      h('span', { class: 'note' }, 'If something does not work, send this log.')),
+      h('button', { class: 'btn', onclick: openReport }, 'Report a problem'),
+      h('span', { class: 'note' }, 'If something does not work, send this log or a problem report.')),
+    S.mode === 'cable' ? cableOptions() : null,
     box,
   ];
 }
@@ -1137,6 +1217,7 @@ function renderOverview(): (Node | null)[] {
     h('div', { class: 'toolbar' },
       h('button', { class: 'btn', disabled: S.scanning || !!S.busy, onclick: async () => { for (const m of found) await readDtcs(m.group, false); } }, 'Read all faults'),
       h('button', { class: 'btn', disabled: !found.length, onclick: saveReport }, 'Save report'),
+      h('button', { class: 'btn', disabled: !found.length || S.scanning || !!S.busy || found.some((m) => S.mods.get(m.group)?.dtcs === undefined && !S.mods.get(m.group)?.dtcNA && !S.mods.get(m.group)?.dtcError), onclick: () => saveCurrentScan(ctx), title: 'Keep this scan in the Garage to compare it later' }, S.busy === 'garage' ? 'Reading VIN…' : 'Save to Garage'),
       h('button', { class: 'btn', disabled: !found.length || found.some((m) => S.mods.get(m.group)?.availProgress), onclick: async () => { for (const m of found) await checkAvailability(m.group, true); } }, 'Re-check supported data'),
     ),
     found.length
@@ -1175,6 +1256,37 @@ function renderLog() {
   d.addEventListener('toggle', () => { const l = d.querySelector('.log')!; l.scrollTop = l.scrollHeight; });
   return d;
 }
+
+// ------------------------------------------------------------------ context for the Garage, Data Logger and Service screens
+const ctx: PageCtx = {
+  session: () => S.session,
+  mode: () => S.mode,
+  scanning: () => S.scanning,
+  found: () => foundModules().map((m) => ({ def: m, ...S.mods.get(m.group)! })),
+  jobs: async (group) => {
+    const st = modState(group);
+    if (!st.jobs && S.session && st.scan?.variant) st.jobs = await S.session.listJobs(st.scan.variant);
+    return st.jobs ?? [];
+  },
+  liveJobs: (group) => liveJobs(modState(group)),
+  cableOk,
+  isService: () => S.session?.safetyMode === 'service',
+  unlockService,
+  stopLive,
+  busy: () => !!S.busy || S.scanning,
+  setBusy: (b) => {
+    S.busy = b;
+  },
+  carTitle,
+  log,
+  rerender: () => {
+    if (S.session) renderAll();
+    else render();
+  },
+  readAllFaults: async () => {
+    for (const m of foundModules()) await readDtcs(m.group, false);
+  },
+};
 
 // ------------------------------------------------------------------ boot
 document.documentElement.lang = 'en';

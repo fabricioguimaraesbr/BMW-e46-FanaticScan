@@ -25,6 +25,8 @@ export interface Dtc {
   text: string; // English
   textOriginal: string; // German text from the SGBD
   details: string[]; // F_ARTn_TEXT
+  /** standard OBD code of a KWP module's fault (FS_LESEN_DETAIL), e.g. "P0171" */
+  pcode?: string;
   present: boolean | null;
   frequency: number | null;
   env: { name: string; value: string; unit: string }[];
@@ -95,7 +97,28 @@ export class DiagSession implements Session {
 
   /** Runs one EDIABAS job; jobs are serialized (one K-line), and aborted after the watchdog timeout. */
   run(sgbd: string, job: string, args?: string, timeoutMs = this.timeout): Promise<JobResponse> {
-    const safety = classifyJob(job);
+    const byName = classifyJob(job, sgbd);
+    // a test or reset whose description says it writes (EWS transponder test…) is a write: check before sending
+    if (byName === 'test' || byName === 'reset') return this.jobComment(sgbd, job).then((c) => this.runClassified(sgbd, job, args, timeoutMs, classifyJob(job, sgbd, c)));
+    return this.runClassified(sgbd, job, args, timeoutMs, byName);
+  }
+
+  private comments = new Map<string, Promise<string>>();
+  /** The job's description from its SGBD ('' when the file or the job is not found). */
+  private jobComment(sgbd: string, job: string): Promise<string> {
+    const key = `${sgbd.toLowerCase()}|${job.toUpperCase()}`;
+    let p = this.comments.get(key);
+    if (!p) {
+      p = this.opts.files
+        .load(sgbd.toLowerCase(), 'prg')
+        .then((f) => (f ? parseJobDoc(f, job)?.comments.join(' ') ?? '' : ''))
+        .catch(() => '');
+      this.comments.set(key, p);
+    }
+    return p;
+  }
+
+  private runClassified(sgbd: string, job: string, args: string | undefined, timeoutMs: number, safety: JobSafety): Promise<JobResponse> {
     if (!isAllowed(safety, this.safetyMode)) {
       const text =
         safety === 'write'
@@ -145,7 +168,35 @@ export class DiagSession implements Session {
   // ---------------------------------------------------------------- error memory
   async readDtcs(sgbd: string, job = 'FS_LESEN'): Promise<{ dtcs: Dtc[]; error?: string; variant: string }> {
     const r = await this.run(sgbd, job);
-    return { dtcs: r.error ? [] : parseDtcs(r.resultSets), error: r.error?.text, variant: r.sgbd };
+    const dtcs = r.error ? [] : parseDtcs(r.resultSets);
+    if (!r.error && dtcs.some((d) => !d.env.length)) await this.addDetails(r.sgbd, dtcs);
+    return { dtcs, error: r.error?.text, variant: r.sgbd };
+  }
+
+  /**
+   * KWP modules (MS45, ME9, MRS5…) list their faults without the conditions; FS_LESEN_DETAIL gives them one by one.
+   * A failed detail never fails the fault list: the fault stays with what FS_LESEN gave (seen in BMWeb #260, where an
+   * MSS54 without the detail job lost its whole fault read).
+   */
+  private async addDetails(variant: string, dtcs: Dtc[]) {
+    const jobs = await this.listJobs(variant).catch(() => [] as JobListEntry[]);
+    const detail = jobs.find((j) => j.name === 'FS_LESEN_DETAIL' && j.safety === 'read');
+    if (!detail || detail.args.length !== 1) return;
+    let failures = 0;
+    for (const d of dtcs) {
+      if (d.env.length) continue;
+      const r = await this.run(variant, detail.name, String(d.code), 6000);
+      const [full] = r.error ? [] : parseDtcs(r.resultSets);
+      if (!full) {
+        if (++failures >= 2) return; // the module does not answer it: keep the list as it is
+        continue;
+      }
+      d.env = full.env;
+      if (full.frequency !== null) d.frequency = full.frequency;
+      if (full.pcode) d.pcode = full.pcode;
+      for (const t of full.details) if (!d.details.includes(t)) d.details.push(t);
+      if (d.present === null) d.present = full.present;
+    }
   }
 
   async clearDtcs(sgbd: string): Promise<{ ok: boolean; error?: string }> {
@@ -224,26 +275,36 @@ export function parseDtcs(sets: ResultSet[]): Dtc[] {
     if (!nr) continue;
     const g = (k: string) => s.get(k)?.value;
     const details: string[] = [];
-    for (let i = 1; i <= 16; i++) {
-      const t = g(`F_ART${i}_TEXT`);
-      if (typeof t === 'string' && t && t !== '---' && !/^--/.test(t)) details.push(translate(t));
-    }
+    const addDetail = (t: unknown) => {
+      if (typeof t !== 'string' || !t || t === '---' || /^--/.test(t) || /unbekannte Fehlerart|Testbedingungen erf/i.test(t)) return;
+      const en = translate(t);
+      if (!details.includes(en)) details.push(en);
+    };
+    // KWP2000 modules: symptom and warning lamp as text (the DS2 modules have them in F_ARTn)
+    addDetail(g('F_SYMPTOM_TEXT'));
+    if (Number(g('F_WARNUNG_NR')) && !/kein Aufleuchten/i.test(String(g('F_WARNUNG_TEXT') ?? ''))) addDetail(g('F_WARNUNG_TEXT'));
+    for (let i = 1; i <= 16; i++) addDetail(g(`F_ART${i}_TEXT`));
     const env: Dtc['env'] = [];
     for (let i = 1; i <= 16; i++) {
       const name = g(`F_UW${i}_TEXT`);
       if (name === undefined) continue;
       env.push({ name: translate(String(name)), value: asText(g(`F_UW${i}_WERT`)), unit: unitLabel(String(g(`F_UW${i}_EINH`) ?? '')) });
     }
-    const code = Number(nr.value);
+    let code = Number(nr.value);
+    if (code < 0) code += 0x10000; // KWP fault codes are 16-bit, the SGBD hands them over signed
     const vorh = g('F_VORHANDEN');
+    const vorhText = g('F_VORHANDEN_TEXT');
+    const pcode = String(g('F_PCODE_STRING') ?? '');
+    const hfk = g('F_HFK');
     out.push({
       code,
       hex: typeof g('F_HEX_CODE') === 'object' ? toHex(g('F_HEX_CODE') as Uint8Array) : String(g('F_HEX_CODE') ?? code.toString(16).toUpperCase().padStart(2, '0')),
       text: translate(String(g('F_ORT_TEXT') ?? '')),
       textOriginal: String(g('F_ORT_TEXT') ?? ''),
       details,
-      present: vorh === undefined ? null : Number(vorh) !== 0,
-      frequency: g('F_HFK') === undefined ? null : Number(g('F_HFK')),
+      pcode: /^[PCBU][0-9A-F]{4}$/i.test(pcode) ? pcode.toUpperCase() : undefined,
+      present: vorh !== undefined ? Number(vorh) !== 0 : typeof vorhText === 'string' && vorhText ? !/nicht vorhanden/i.test(vorhText) : null,
+      frequency: hfk === undefined || Number(hfk) < 0 ? null : Number(hfk),
       env,
     });
   }
@@ -299,13 +360,14 @@ export function describeJobs(f: PrgFile): JobListEntry[] {
           : /^IDENT/.test(n)
             ? 'ident'
             : 'other';
+    const doc = d?.comments.join(' ') ?? '';
     return {
       name: j.name,
-      comment: jobLabel(d?.comments.join(' ') ?? ''),
+      comment: jobLabel(doc),
       commentOriginal: d?.comments.join(' ').trim() ?? '',
       args: (d?.args ?? []).map((a) => ({ name: a.name, type: a.type, comment: argLabel(a.comments.join(' ')) })),
       kind,
-      safety: classifyJob(j.name),
+      safety: classifyJob(j.name, f.name, doc),
     };
   });
 }

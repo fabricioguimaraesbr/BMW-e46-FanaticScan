@@ -2,7 +2,7 @@
 // Every byte written is echoed (single-wire K-line), then the addressed ECU answers with a DS2 telegram.
 
 import { QueuedChannel, SerialConfig, sleep } from '../transport/ByteChannel';
-import { xor } from '../transport/ObdInterface';
+import { sum8, xor } from '../transport/ObdInterface';
 
 export interface SimEcu {
   address: number;
@@ -11,6 +11,11 @@ export interface SimEcu {
   handle(data: Uint8Array): number[] | null;
   /** OBD-II (ISO 9141-2) service request (service id + data) → answer messages (service id + 0x40 …), or null. */
   handleObd?(req: Uint8Array): number[][] | null;
+  /** KWP modules (MS45, ME9, MRS5): service request → response payload, or null for no answer. Several payloads
+   * are sent one after the other (a "response pending" 7F xx 78 followed by the answer). */
+  handleKwp?(req: Uint8Array): number[] | number[][] | null;
+  /** Which KWP framing the module answers: KWP2000* on 9600 8E1 or BMW-FAST on 115200 8N1. */
+  protocol?: 'kwp2000s' | 'bmwfast';
 }
 
 const isoSum = (b: number[]) => b.reduce((a, x) => a + x, 0) & 0xff;
@@ -68,7 +73,7 @@ export class SimChannel extends QueuedChannel {
   private isoBuf: number[] = [];
   private isoLast = 0;
   /** 5-baud wake-up: decode the address from the break timing (200 ms per bit). */
-  async setSignals(s: { brk?: boolean }) {
+  async setSignals(s: { dtr?: boolean; rts?: boolean; brk?: boolean }) {
     if (s.brk === undefined || this.cfg?.baudRate !== 10400) return;
     const last = this.brkEdges[this.brkEdges.length - 1];
     if (!last || last.brk !== s.brk) this.brkEdges.push({ t: performance.now(), brk: s.brk });
@@ -140,7 +145,10 @@ export class SimChannel extends QueuedChannel {
     if (!this.open_) throw new Error('Cable unplugged');
     if (this.echo) this.onData(data.slice());
     if (this.cfg?.baudRate === 10400 && this.cfg.parity === 'none') return this.isoWrite(data);
+    if (this.cfg?.baudRate === 115200 && this.cfg.parity === 'none') return this.fastWrite(data);
     if (this.cfg?.baudRate !== 9600 || this.cfg.parity !== 'even') return; // wrong line settings: garbage, no answer
+    // KWP2000*: B8 <target> <source> <len> data... xor
+    if (data.length >= 5 && data[0] === 0xb8 && data[3] + 5 === data.length && xor(data) === 0) return this.kwpWrite(data);
     // DS2 telegram: addr, len, data..., xor
     if (data.length < 3 || data[1] !== data.length || xor(data) !== 0) return;
     const ecu = this.ecus.get(data[0]);
@@ -152,4 +160,33 @@ export class SimChannel extends QueuedChannel {
     await sleep(this.answerDelay + tel.length * this.byteTime);
     if (this.open_) this.onData(new Uint8Array(tel));
   }
+
+  private async kwpWrite(data: Uint8Array) {
+    const ecu = this.ecus.get(data[1]);
+    if (!ecu?.handleKwp || ecu.protocol !== 'kwp2000s') return;
+    const ans = ecu.handleKwp(data.subarray(4, data.length - 1));
+    for (const body of frames(ans)) {
+      const tel = [0xb8, data[2], data[1], body.length, ...body];
+      tel.push(xor(tel));
+      await sleep(this.answerDelay + tel.length * this.byteTime);
+      if (this.open_) this.onData(new Uint8Array(tel));
+    }
+  }
+
+  /** BMW-FAST: <0x80|len> <target> <source> data... sum (long form: 0x80 tgt src len data... sum). */
+  private async fastWrite(data: Uint8Array) {
+    if (data.length < 4 || (data[0] & 0xc0) !== 0x80 || sum8(data.subarray(0, data.length - 1)) !== data[data.length - 1]) return;
+    const short = data[0] & 0x3f;
+    const body = short ? data.subarray(3, 3 + short) : data.subarray(4, 4 + data[3]);
+    const ecu = this.ecus.get(data[1]);
+    if (!ecu?.handleKwp || ecu.protocol !== 'bmwfast') return;
+    for (const ans of frames(ecu.handleKwp(body))) {
+      const tel = ans.length < 64 ? [0x80 | ans.length, data[2], data[1], ...ans] : [0x80, data[2], data[1], ans.length, ...ans];
+      tel.push(sum8(tel));
+      await sleep(this.answerDelay + tel.length * this.byteTime * 0.1);
+      if (this.open_) this.onData(new Uint8Array(tel));
+    }
+  }
 }
+
+const frames = (a: number[] | number[][] | null): number[][] => (!a ? [] : Array.isArray(a[0]) ? (a as number[][]) : [a as number[]]);

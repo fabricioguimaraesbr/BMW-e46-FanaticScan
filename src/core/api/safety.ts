@@ -16,7 +16,34 @@ const TEST = /^(STEUERN|START|STOP|TEST)_|DRUCK(ABBAU|AUFBAU|HALTEN)|PUMPENFOERD
 const SESSION = /^(INFO|INITIALISIERUNG|DIAGNOSE_(ENDE|AUFRECHT|STOP|ERHALTEN)|IDENTIFIKATION)$/;
 const READ = /_LESEN$|^STATUS_|^LESEN_|_LESEN_|^FS_.*LESEN|^IS_.*LESEN|_PRUEFEN$|^ECU_CONFIG$|^IDENT|HERSTELLDATEN$|^C_CHECKSUM$/;
 
-export function classifyJob(name: string): JobSafety {
+/**
+ * Jobs whose name sounds harmless but that write to the module or to the key. Keyed by SGBD (lower case, without
+ * extension); '*' applies to every SGBD. Found by reading the job descriptions of the E46 files.
+ */
+const WRITE_OVERRIDES: Record<string, string[]> = {
+  // "Schreibzugriff auf den Transponder via EWS-SG": writes a byte into the key's transponder
+  ews: ['STEUERN_SELBSTTEST'],
+  ews3: ['STEUERN_SELBSTTEST'],
+  ews3d: ['STEUERN_SELBSTTEST'],
+};
+/** Job description words that mean a permanent write, whatever the job is called. */
+const WRITE_DOC = /(?<!zu )schreib|programmier|transponder|eeprom|flash|codier/i;
+
+/**
+ * @param name job name
+ * @param sgbd SGBD the job belongs to (variant file), for the per-file overrides
+ * @param comment the job's description from the SGBD: a test or reset described as writing is treated as a write
+ */
+export function classifyJob(name: string, sgbd?: string, comment?: string): JobSafety {
+  const base = classifyByName(name);
+  const n = name.toUpperCase();
+  const file = (sgbd ?? '').toLowerCase().replace(/\.(prg|grp)$/, '');
+  if (base !== 'write' && (WRITE_OVERRIDES[file]?.includes(n) || WRITE_OVERRIDES['*']?.includes(n))) return 'write';
+  if ((base === 'test' || base === 'reset') && comment && WRITE_DOC.test(comment)) return 'write';
+  return base;
+}
+
+function classifyByName(name: string): JobSafety {
   const n = name.toUpperCase();
   if (SESSION.test(n)) return 'read';
   if (n === 'RESET_ADAPTION') return 'reset';

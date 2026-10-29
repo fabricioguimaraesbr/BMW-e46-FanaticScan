@@ -3,6 +3,7 @@
 
 import type { SimEcu } from './SimChannel';
 import { DriveCycle } from './drive';
+import { Ms45, Mrs5 } from './kwp';
 
 const ascii = (s: string) => [...s].map((c) => c.charCodeAt(0));
 
@@ -219,13 +220,30 @@ class Ms43 extends DtcEcu {
  * The simulated car. Engine and gearbox follow one drive cycle (see drive.ts). By default it starts at warm idle
  * (tests); the app passes a cycle that starts with the key on and the engine off.
  */
-export function createE46(opts: { obdStored?: string[]; obdPending?: string[]; drive?: DriveCycle } = {}): SimEcu[] {
+export interface SimOptions {
+  obdStored?: string[];
+  obdPending?: string[];
+  drive?: DriveCycle;
+  /** 'ms43' (default): the owner's 325i. 'ms45': a 2003+ M54 whose DME speaks KWP2000*. */
+  engine?: 'ms43' | 'ms45';
+  /** Add an MRS5 airbag module (BMW-FAST at 115200 baud). */
+  mrs5?: boolean;
+}
+
+export function createE46(opts: SimOptions = {}): SimEcu[] {
   const drive = opts.drive ?? new DriveCycle(340);
-  const dme = new Ms43(drive);
-  dme.obdStored = opts.obdStored ?? [];
-  dme.obdPending = opts.obdPending ?? [];
+  let dme: SimEcu;
+  if (opts.engine === 'ms45') dme = new Ms45(drive);
+  else {
+    const ms43 = new Ms43(drive);
+    ms43.obdStored = opts.obdStored ?? [];
+    ms43.obdPending = opts.obdPending ?? [];
+    dme = ms43;
+  }
   return [
     dme,
+    // MRS5: the D_00A4 group finds it with KWP2000* at 0x58; MRS5.PRG talks BMW-FAST to 0x01
+    ...(opts.mrs5 ? [new Mrs5(0x01, 'bmwfast'), new Mrs5(0x58, 'kwp2000s')] : []),
     Object.assign(new Gs8604(0x32, 'EGS GS8.60.4', ident({ bmw: '7548312', hw: '2H', cod: '00', diag: '11', bus: '60', week: '02', year: '01', sw: '22' }), [
       { code: 0x61, type: 0xc1 },
     ], 19), { drive }),
