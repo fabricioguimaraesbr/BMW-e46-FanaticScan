@@ -44,7 +44,7 @@ describe('plug-and-play session (simulated E46)', () => {
   it('identifies modules without any BMW file', async () => {
     const s = await session();
     const found = (await s.scan()).filter((e) => e.variant);
-    expect(found.map((e) => [e.module.short, e.ident.ID_BMW_NR])).toEqual([['DME', '7545150'], ['EGS', '7548312'], ['ABS', '6751767']]);
+    expect(found.map((e) => [e.module.short, e.ident.ID_BMW_NR])).toEqual([['DME', '7545150'], ['EGS', '7548312'], ['ABS', '6751767'], ['IKE', '6911342']]);
   }, 30000);
 
   it('reads, describes and clears engine faults over OBD-II', async () => {

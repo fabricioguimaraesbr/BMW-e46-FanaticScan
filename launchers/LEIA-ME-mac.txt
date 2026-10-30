@@ -4,7 +4,9 @@ E46Fanatics Scan para Mac - diagnostico do BMW E46
 Le a identificacao dos modulos, le e apaga erros, mostra dados em tempo real.
 Abre em modo SOMENTE LEITURA: nada e gravado no carro.
 Testes de atuador e resets ficam travados ate voce destravar.
-Codificacao/programacao nao existe neste programa.
+Codificacao/programacao: so existe UMA funcao, na tela "Coding": a curva do ponteiro
+de temperatura do painel (o "buffer" de 75-115 graus). Ela salva o backup do painel
+antes, compara os bytes, regrava so a curva e confere depois. Da para voltar a original.
 
 Funciona em Mac Intel e Apple Silicon (M1, M2, M3...).
 
@@ -52,3 +54,11 @@ NO CARRO
 
 Se algo nao funcionar, abra a pagina "Log" no menu lateral, clique em "Save log"
 e envie o arquivo.
+
+SESSAO REMOTA (ver o carro de um amigo, ou mostrar o seu)
+---------------------------------------------------------
+Botao "Remote session" no topo. Quem esta no carro: "Share my car", escolha o acesso
+e mande o CODIGO DE CONVITE (WhatsApp, e-mail). O amigo cola em "Connect to a car" e
+devolve o CODIGO DE RESPOSTA; cole e pronto. Os dois precisam de internet.
+Somente leitura por padrao; apagar erros e testes pedem a sua aprovacao na hora.
+Gravar no carro (inclusive o ponteiro) nunca e possivel pela sessao remota.

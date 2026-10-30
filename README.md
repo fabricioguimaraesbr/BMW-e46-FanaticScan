@@ -49,7 +49,7 @@ Quem vai usar o programa (Windows ou Mac, inclusive M1) **não precisa instalar 
 2. Windows: rode `Criar atalho na Area de Trabalho.bat` uma vez e use o ícone (ou `Abrir no Windows.bat`). Mac: botão direito em `Abrir no Mac.command` > Abrir (só na primeira vez).
 3. **Connect cable** e escolha a porta FTDI na janela do Chrome. Ou **Start simulator** para testar sem o carro.
 
-O Safari e o Firefox não têm Web Serial; neles só o simulador funciona. No simulador dá para escolher o carro: o 325i 2001 (MS43, DS2) ou um 325i 2004 (MS45 em KWP2000\* e airbag MRS5).
+O Safari e o Firefox não têm Web Serial; neles só o simulador funciona.
 
 ### Cabo
 
@@ -106,7 +106,19 @@ Toda função dos arquivos da BMW é classificada (`src/core/api/safety.ts`) e a
 | Resets | `ADAPT_*_LOESCHEN`, `RESET_ADAPTION` | bloqueado até "Unlock tests & resets" |
 | Escrita permanente | codificação, EEPROM/flash, sincronização EWS (`MEHRFACHSTARTWERTABGLEICH`, `STEUERN_SYNC_MODE`), `*_PROGRAMMIEREN`, `*_SCHREIBEN` | sempre bloqueado e escondido |
 
+**Única exceção, controlada:** a curva do ponteiro de temperatura do painel (tela **Coding**, `src/core/coding/`). Ela não usa os jobs da BMW (esses continuam bloqueados): fala direto com o serviço de memória do painel (KOMBI46/KOMBI46R, endereço 0x80), e só grava os bytes da curva encontrada, depois de ler o EEPROM inteiro e salvar o backup, conferindo de novo antes de gravar e relendo cada palavra depois. A curva original pode ser restaurada a qualquer momento (desta sessão ou de um arquivo de backup).
+
+**Sessão remota:** quem está no carro decide o acesso (somente leitura ou leitura + testes). Apagar erros e cada teste pedem aprovação no computador do carro; escrita (inclusive a curva do ponteiro) nunca passa pela sessão remota.
+
 Funções desconhecidas são tratadas como escrita (bloqueadas). Além do nome, o programa lê a descrição da função no arquivo da BMW: um "teste" ou "reset" descrito como gravação (por exemplo `STEUERN_SELBSTTEST` do EWS, que grava no transponder da chave, ou `STEUERN_*_PROGRAMM` da ME9) é tratado como escrita.
+
+## Ponteiro de temperatura (Coding)
+
+O ponteiro do E46 fica parado no meio de 75 a 115 °C. A tela **Coding** lê o EEPROM do painel (512 bytes no KOMBI46, até ~2002; 2 KB no KOMBI46R, 2003+), salva o backup (`e46-kombi46-eeprom-AAAA-MM-DD-HHMM.bin`), encontra a curva (byte 0x0F0 no layout antigo: pares temperatura/ângulo; perto de 0x34D no novo: só temperaturas) e oferece as curvas do guia do E46Fanatics (fábrica, Revisão #1 90–100 °C, Revisão #2 sem buffer; no layout novo também a curva do M3) ou pontos próprios, com gráfico, ponteiro de prévia, temperatura atual do motor e comparação dos bytes. Depois de gravar, "Restart cluster" reinicia o painel (ou desligar e ligar a ignição).
+
+## Sessão remota
+
+Botão **Remote session** no topo. Quem está no carro clica em "Share my car", escolhe o acesso e recebe um **código de convite**; o colega cola em "Connect to a car" e devolve um **código de resposta**. A ligação é direta entre os navegadores (WebRTC, `src/web/remote.ts`); não há servidor do projeto, só servidores STUN públicos para descobrir o endereço de cada um. O colega usa o programa normalmente (falhas, live data, logger, relatório); cada leitura roda no computador do carro (`src/core/remote/remote.ts`). Redes que bloqueiam ligação direta (algumas redes móveis/corporativas) podem impedir a conexão.
 
 ## Indicadores de conexão
 
@@ -143,7 +155,9 @@ Os testes rodam o fluxo completo (interpretador + camada do cabo + carro simulad
 - Garage (comparação de scans, exportação), relatório de problema (chassi mascarado) e procedimentos de serviço;
 - o apagamento da memória de erros;
 - a leitura em tempo real;
-- o funcionamento com cabo com e sem eco.
+- o funcionamento com cabo com e sem eco;
+- a curva do ponteiro (achar, codificar as revisões do guia byte a byte, recusar curvas inválidas, gravar só as palavras que mudam, recusar se o painel mudou depois do backup, restaurar);
+- a sessão remota (leitura, aprovação para apagar erros, recusa de testes no modo somente leitura e de escrita sempre, códigos de convite).
 
 ## Estrutura
 
@@ -152,14 +166,16 @@ Os testes rodam o fluxo completo (interpretador + camada do cabo + carro simulad
 | `src/core/prg` | Leitor dos arquivos `.prg`/`.grp` (tabelas, jobs, documentação) |
 | `src/core/ediabas` | Interpretador BEST/2 (equivalente ao EDIABAS) |
 | `src/core/transport` | DS2, KWP2000\* e BMW-FAST sobre linha K (`ObdInterface`) e abstração da porta serial |
-| `src/core/sim` | Simulador byte a byte do E46 (MS43 ou MS45, GS8.60.4, ASC MK20, MRS5) |
+| `src/core/sim` | Simulador byte a byte do E46 (MS43, GS8.60.4, ASC MK20, painel KOMBI46 com EEPROM); MS45, MRS5 e KOMBI46R só nos testes |
+| `src/core/coding` | Curva do ponteiro de temperatura (`gaugeCurve.ts`) e acesso ao EEPROM do painel (`clusterEeprom.ts`) |
+| `src/core/remote` | Sessão remota: protocolo, regras do lado do carro (`RemoteHost`) e sessão do colega (`RemoteSession`) |
 | `src/core/api` | Sessão de diagnóstico, módulos do E46, tradução, Garage (`garage.ts`), relatório (`report.ts`), procedimentos (`service.ts`) |
 | `src/web` | Interface, Web Serial, armazenamento dos arquivos no navegador |
 | `scripts/` | Ferramentas de engenharia reversa: disassembler de jobs, sondas de resposta |
 
 ## Limitações conhecidas
 
-- **Ainda não foi testado no carro.** Tudo foi validado contra o simulador, que foi construído a partir dos formatos que os próprios arquivos `.prg` esperam e dos seus logs. Os tempos reais do cabo podem pedir ajuste (`extraTimeout` em `ObdInterface`). Se algo falhar, abra a página **Log** no menu lateral e envie o que aparecer (botão "Save log").
+- Testado no carro (325i 2001, DS2) na versão 1.2. A gravação da curva do ponteiro e a sessão remota foram validadas só no simulador (e a sessão remota entre duas abas do Chrome). Se algo falhar, abra a página **Log** no menu lateral e envie o que aparecer (botão "Save log").
 - KWP2000\* (MS45, ME9) e BMW-FAST (MRS5) foram validados só no simulador; nenhum desses carros foi lido ainda. Os resets de adaptação da MS45/ME9 pedem argumentos (`ADAP_SELEKTIV_LOESCHEN`) e ainda não estão na tela Service.
 - A interface é em inglês. Erros, funções e valores da DME, do câmbio e do ABS foram traduzidos do alemão (`src/core/api/i18n-en.ts` e `i18n-jobs.ts`); nos outros módulos a tradução é aproximada (glossário), e o texto original em alemão aparece no detalhe do erro.
 - As telas do INPA (`.IPO`) não são executadas; as telas equivalentes foram refeitas a partir dos jobs.
@@ -169,7 +185,7 @@ Os testes rodam o fluxo completo (interpretador + camada do cabo + carro simulad
 1. Testar no carro e ajustar tempos.
 2. Telas dedicadas para o câmbio (adaptações, temperatura do óleo, marcha) e ABS (sensores de roda).
 3. Testes guiados com acompanhamento de valores (VANOS, sonda lambda).
-4. Codificação com backup obrigatório antes de qualquer gravação.
+4. Outras codificações de baixo risco, com o mesmo esquema da curva do ponteiro (backup, comparação, releitura, restaurar).
 
 ## Licença
 

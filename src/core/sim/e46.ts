@@ -217,6 +217,40 @@ class Ms43 extends DtcEcu {
 }
 
 /**
+ * Instrument cluster KOMBI46 (up to 2002) or KOMBI46R (2003+) at 0x80: binary ident (diagnosis index 53 / 64), empty
+ * fault memory, the coolant temperature it gets over CAN, and an EEPROM with the coolant gauge curve where the real
+ * clusters keep it, answering the DS2 memory read (06 03) and write (07 03) services.
+ */
+export class Kombi46 extends DtcEcu {
+  readonly eeprom: Uint8Array;
+  writes = 0;
+  constructor(readonly drive: DriveCycle, readonly kind: 'kombi46' | 'kombi46r' = 'kombi46') {
+    super(0x80, kind === 'kombi46' ? 'KOMBI46' : 'KOMBI46R', [0xa0, 0x06, 0x91, 0x13, 0x42, 0x30, 0x04, kind === 'kombi46' ? 0x53 : 0x64, 0x10, 0x20, 0x01, 0x00, 0x00, 0x00, 0x30, 0x00, ...new Array(20).fill(0)], []);
+    this.eeprom = new Uint8Array(kind === 'kombi46' ? 0x200 : 0x800);
+    // filler that never looks like a curve
+    for (let i = 0; i < this.eeprom.length; i++) this.eeprom[i] = (i * 37 + 11) & 0xff;
+    if (kind === 'kombi46') this.eeprom.set([0x0f, 0x00, 0x32, 0x1f, 0x4b, 0x5a, 0x73, 0x5a, 0x7c, 0x94, 0x7d, 0xa4, 0x06, 0x0e, 0x1e, 0x0f], 0xf0);
+    else this.eeprom.set([0x06, 0x0f, 0x32, 0x4b, 0x73, 0x7d, 0x8f, 0x00, 0x10, 0x2d, 0x2d, 0x4f, 0x54], 0x34d);
+  }
+  protected status(d: Uint8Array): number[] {
+    const words = this.eeprom.length / 2;
+    if ((d[0] === 0x06 || d[0] === 0x07) && d[1] === 0x03) {
+      const w = (d[3] << 8) | d[4];
+      const n = d[5];
+      if (!n || w + n > words || (d[0] === 0x06 && n > 16)) return [0xa2];
+      if (d[0] === 0x06) return [0xa0, ...this.eeprom.subarray(w * 2, (w + n) * 2)];
+      if (d.length < 6 + n * 2) return [0xa2];
+      this.eeprom.set(d.subarray(6, 6 + n * 2), w * 2);
+      this.writes++;
+      return [0xa0];
+    }
+    if (d[0] === 0x06 && d[1] === 0x0a && this.kind === 'kombi46') return [0xa0, u8((this.drive.state().clt + 48) / 0.75)];
+    if (d[0] === 0x12) return [0xa0];
+    return super.status(d);
+  }
+}
+
+/**
  * The simulated car. Engine and gearbox follow one drive cycle (see drive.ts). By default it starts at warm idle
  * (tests); the app passes a cycle that starts with the key on and the engine off.
  */
@@ -228,6 +262,8 @@ export interface SimOptions {
   engine?: 'ms43' | 'ms45';
   /** Add an MRS5 airbag module (BMW-FAST at 115200 baud). */
   mrs5?: boolean;
+  /** Instrument cluster type (default 'kombi46', like the owner's 2001 car); false: no cluster. */
+  cluster?: 'kombi46' | 'kombi46r' | false;
 }
 
 export function createE46(opts: SimOptions = {}): SimEcu[] {
@@ -252,5 +288,6 @@ export function createE46(opts: SimOptions = {}): SimEcu[] {
       { code: 0x94, type: 0x37 },
       { code: 0x95, type: 0x37 },
     ], 3, false),
+    ...(opts.cluster === false ? [] : [new Kombi46(drive, opts.cluster ?? 'kombi46')]),
   ];
 }

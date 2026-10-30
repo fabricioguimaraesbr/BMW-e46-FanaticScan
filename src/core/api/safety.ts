@@ -5,6 +5,10 @@
 //   test   — actuator tests: temporarily drives a component (fuel pump, injector cut, fan, ABS valves…)
 //   reset  — resets learned values (adaptations, trims); the car re-learns them
 //   write  — permanent writes: coding, EEPROM/flash, EWS immobilizer sync, programming of trims. Always blocked.
+//
+// The one controlled exception does not go through SGBD jobs at all: the coolant gauge curve of the instrument
+// cluster (src/core/coding/clusterEeprom.ts), with its own backup / compare / verify rules. Remote sessions
+// (src/core/remote/remote.ts) apply these classes again on the computer at the car, more strictly.
 
 export type JobSafety = 'read' | 'clear' | 'test' | 'reset' | 'write';
 export type SafetyMode = 'read' | 'service';

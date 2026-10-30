@@ -95,6 +95,26 @@ export class NativeSession implements Session {
     return r && r.length >= 4 && r[2] === 0xa0 ? r.slice(3, r.length - 1) : null;
   }
 
+  /** Raw DS2 exchange (whole answer frame, any status), serialized with everything else on the line. */
+  ds2Raw(addr: number, data: number[], timeout = 1000): Promise<Uint8Array | null> {
+    return this.serial(async () => {
+      if (this.iso.isReady) {
+        this.iso.release();
+        this.opts.iface.resetLine();
+      }
+      const i = this.opts.iface;
+      await i.setCommParameter([6, 9600, addr, 0, 0, timeout, 50, 20, 0]);
+      i.setCommAnswerLen([-1, 0]);
+      i.commRepeats = 0;
+      try {
+        const r = await i.transmitData(new Uint8Array([addr, data.length + 3, ...data]));
+        return r && r.length >= 4 ? r : null;
+      } catch {
+        return null;
+      }
+    });
+  }
+
   private ensureObd() {
     this.opts.iface.resetLine();
     return this.iso.isReady || this.iso.init();

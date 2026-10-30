@@ -6,7 +6,7 @@ import { Availability, BLOCKED_CODE, DiagSession, Dtc, Session, JobListEntry, Sc
 import { HybridSession } from '../core/api/HybridSession';
 import { EQUIPMENT_LABEL, EquipmentKey, isHiddenByEquipment } from '../core/api/equipment';
 import { SAFETY_LABEL } from '../core/api/safety';
-import { E46_MODULES, ModuleDef } from '../core/api/modules';
+import { ALL_E46_MODULES, E46_MODULES, ModuleDef } from '../core/api/modules';
 import { EngineContext, KEY_METRICS, RefState, Reference, baseKey, engineContext, evaluate, referenceFor } from '../core/api/reference';
 import { PanelPick, barScale, sameValueId, groupValues, isFlag, kindOf, pickPanel, visibleValues } from '../core/api/livelayout';
 import type { JobResponse } from '../core/ediabas/Ediabas';
@@ -21,6 +21,11 @@ import type { PageCtx } from './ctx';
 import { loadGarage, renderGarage, saveCurrentScan } from './garagePage';
 import { loggerRunning, renderLogger, resetLogger, stopLogger } from './loggerPage';
 import { renderService, resetService } from './servicePage';
+import { renderCoding, resetCoding } from './codingPage';
+import { renderLibrary } from './libraryPage';
+import { openTroubleshoot } from './troubleshoot';
+import { ShareState, approvalDialog, openRemoteDialog } from './remote';
+import type { RemoteSession } from '../core/remote/remote';
 import { toHex } from '../core/util/numbers';
 import { BrowserFileProvider } from './BrowserFileProvider';
 import { liquidBackdrop } from './backdrop';
@@ -32,7 +37,7 @@ import { confirmDialog, download, h, nodes, stamp, store } from './dom';
 
 // ------------------------------------------------------------------ state
 /** Sections of the side menu. Module pages (faults, live, functions) show the module tabs on top. */
-type Page = 'overview' | 'faults' | 'live' | 'functions' | 'service' | 'logger' | 'garage' | 'report' | 'log';
+type Page = 'overview' | 'faults' | 'live' | 'functions' | 'service' | 'coding' | 'logger' | 'garage' | 'library' | 'report' | 'log';
 const MODULE_PAGES: Page[] = ['faults', 'live', 'functions'];
 interface ModState {
   scan?: ScanEntry;
@@ -53,14 +58,19 @@ const S = {
   iface: null as ObdInterface | null,
   /** K+DCAN line control, remembered in this browser */
   dtrMode: store.get<DtrMode>('e46diag.dtrMode', 'off'),
-  /** which car the simulator plays */
-  simEngine: store.get<'ms43' | 'ms45'>('e46diag.simEngine', 'ms43'),
+  /** also scan the modules only some cars have (navigation, phone, seats…) */
+  scanOptional: store.get<boolean>('e46diag.scanOptional', false),
   /** the cable looks slow (FTDI latency timer) */
   hint: '' as '' | 'latency',
-  /** the Garage opened from the start screen (no car connected) */
-  garageOffline: false,
+  /** a screen opened from the start screen (no car connected) */
+  offline: '' as '' | 'garage' | 'library',
   channel: null as ByteChannel | null,
-  mode: null as 'cable' | 'sim' | null,
+  mode: null as 'cable' | 'sim' | 'remote' | null,
+  /** helper side: the car of someone else, read through a remote session */
+  remote: null as RemoteSession | null,
+  remoteAccess: '' as '' | 'read' | 'tests',
+  /** owner side: this car is shared with a helper */
+  share: null as ShareState | null,
   busy: '' as string,
   scanning: false,
   selected: null as string | null, // module group, null = vehicle overview
@@ -87,7 +97,7 @@ const S = {
   jobResult: null as JobResponse | null,
 };
 const modState = (g: string) => S.mods.get(g) ?? S.mods.set(g, {}).get(g)!;
-const moduleDef = (g: string) => E46_MODULES.find((m) => m.group === g)!;
+const moduleDef = (g: string) => ALL_E46_MODULES.find((m) => m.group === g)!;
 const hex2 = (n: number) => n.toString(16).toUpperCase().padStart(2, '0');
 const dtcCode = (d: Dtc) => d.label ?? hex2(d.code);
 const app = document.getElementById('app')!;
@@ -105,19 +115,21 @@ function log(cls: string, text: string) {
 }
 
 // ------------------------------------------------------------------ connection & status
-type CablePill = 'none' | 'detected' | 'connected' | 'unplugged' | 'reconnecting' | 'sim';
+type CablePill = 'none' | 'detected' | 'connected' | 'unplugged' | 'reconnecting' | 'sim' | 'remote';
 const link = { lastAnswer: 0, lastNoAnswer: 0, scanStart: 0 };
 let preCable = { present: false, name: '' };
 
 function cableState(): CablePill {
   if (!S.session) return preCable.present ? 'detected' : 'none';
+  if (S.mode === 'remote') return S.remote?.open ? 'remote' : 'unplugged';
   const st = (S.channel as unknown as { state?: string }).state ?? 'connected';
   if (S.mode === 'sim' && st === 'connected') return 'sim';
   return st as CablePill;
 }
 function carState(): 'ok' | 'noanswer' | 'idle' {
   const c = cableState();
-  if (c !== 'connected' && c !== 'sim') return 'idle';
+  if (c !== 'connected' && c !== 'sim' && c !== 'remote') return 'idle';
+  if (c === 'remote') return S.remote && Date.now() - S.remote.lastAnswer < 30000 ? 'ok' : 'idle';
   // A module that is not fitted (or is on a line the cable does not reach) does not answer; that must not
   // turn the car red while other modules are answering. During a scan, any answer since it started counts.
   if (S.scanning && link.lastAnswer >= link.scanStart && link.lastAnswer) return 'ok';
@@ -132,6 +144,7 @@ const CABLE_TEXT: Record<CablePill, [string, string]> = {
   unplugged: ['fault', 'Cable unplugged'],
   reconnecting: ['busy', 'Reconnecting…'],
   sim: ['ok', 'Simulator'],
+  remote: ['ok', 'Remote car'],
 };
 const CAR_TEXT = { ok: ['ok', 'Car responding'], noanswer: ['warn', 'Car not responding'], idle: ['off', 'Car —'] } as const;
 
@@ -155,7 +168,7 @@ setInterval(updatePills, 2000);
 async function connect(mode: 'cable' | 'sim') {
   S.connError = '';
   try {
-    const ch = mode === 'sim' ? new SimChannel(createE46({ drive: (simDrive = new DriveCycle(0)), engine: S.simEngine, mrs5: S.simEngine === 'ms45' })) : await WebSerialChannel.request();
+    const ch = mode === 'sim' ? new SimChannel(createE46({ drive: (simDrive = new DriveCycle(0)) })) : await WebSerialChannel.request();
     const iface = new ObdInterface(ch, {
       dtrMode: mode === 'sim' ? 'off' : S.dtrMode,
       onHint: (k) => {
@@ -206,6 +219,15 @@ async function connect(mode: 'cable' | 'sim') {
 }
 
 async function disconnect() {
+  S.share?.stop();
+  S.share = null;
+  resetCoding();
+  if (S.remote) {
+    const r = S.remote;
+    S.remote = null;
+    r.close();
+  }
+  S.remoteAccess = '';
   stopLive();
   stopLogger();
   resetLogger();
@@ -213,7 +235,7 @@ async function disconnect() {
   S.session?.abort();
   if (S.session instanceof NativeSession) S.session.iso.stopKeepAlive();
   if (S.session instanceof HybridSession) S.session.native.iso.stopKeepAlive();
-  (S.channel as unknown as { dispose?: () => void }).dispose?.();
+  (S.channel as unknown as { dispose?: () => void } | null)?.dispose?.();
   await S.channel?.close().catch(() => undefined);
   S.session = null;
   S.channel = null;
@@ -225,7 +247,59 @@ async function disconnect() {
   render();
 }
 
-const cableOk = () => !!S.channel?.isOpen;
+const cableOk = () => (S.mode === 'remote' ? !!S.remote?.open : !!S.channel?.isOpen);
+
+// ------------------------------------------------------------------ remote session
+function openRemote() {
+  openRemoteDialog({
+    carSession: () => (S.mode === 'cable' || S.mode === 'sim' ? S.session : null),
+    app: __APP_VERSION__,
+    carTitle,
+    cachedScan: () => ALL_E46_MODULES.map((m) => S.mods.get(m.group)?.scan).filter((e): e is ScanEntry => !!e),
+    sharing: () => S.share,
+    approve: async (a) => {
+      log('info', `Remote helper asks: ${a.title} (${a.detail})`);
+      const ok = await approvalDialog(a);
+      if (ok && (a.kind === 'test' || a.kind === 'reset') && S.session && S.session.safetyMode !== 'service') {
+        S.session.safetyMode = 'service';
+        renderRail();
+      }
+      log(ok ? 'info' : 'tx', `${ok ? 'Allowed' : 'Refused'}: ${a.title}`);
+      return ok;
+    },
+    onShareStarted: (st) => {
+      S.share = st;
+      log('info', `Sharing this car with a helper (${st.access === 'read' ? 'read only' : 'read + tests'})`);
+      render();
+    },
+    onShareEnded: (reason) => {
+      if (!S.share) return;
+      S.share = null;
+      log('info', `Remote session ended: ${reason}`);
+      render();
+    },
+    onActivity: (text, refused) => log(refused ? 'tx' : 'info', `Remote: ${text}`),
+    onHelperConnected: (session, info) => {
+      S.remote = session;
+      S.remoteAccess = info.access;
+      S.session = session;
+      S.channel = null;
+      S.iface = null;
+      S.mode = 'remote';
+      S.offline = '';
+      S.mods.clear();
+      link.lastAnswer = Date.now();
+      log('info', `Connected to a shared car: ${info.car} (${info.access === 'read' ? 'read only' : 'read + tests, approved by the owner'}, app v${info.app})`);
+      render();
+      void scan();
+    },
+    onHelperClosed: () => {
+      if (S.mode !== 'remote') return;
+      log('tx', 'The shared car disconnected');
+      void disconnect();
+    },
+  });
+}
 
 async function scan() {
   if (!S.session || S.scanning) return;
@@ -234,13 +308,13 @@ async function scan() {
   link.scanStart = Date.now();
   S.mods.clear();
   render();
-  await session.scan(E46_MODULES, (e) => {
+  await session.scan(S.scanOptional ? ALL_E46_MODULES : E46_MODULES, (e) => {
     modState(e.module.group).scan = e;
     if (!S.live.running) renderMain();
   });
   S.scanning = false;
   render();
-  const found = E46_MODULES.filter((m) => modState(m.group).scan?.variant);
+  const found = ALL_E46_MODULES.filter((m) => modState(m.group).scan?.variant);
   for (const m of found) if (!S.live.running && S.session === session) await readDtcs(m.group, false);
   for (const m of found) if (S.session === session) await checkAvailability(m.group);
 }
@@ -684,8 +758,10 @@ function renderAppBar() {
 function render() {
   const top = renderTop();
   if (!S.session) {
-    if (S.garageOffline) {
-      app.replaceChildren(top, h('div', { class: 'layout single' }, h('main', {}, ...nodes(renderGarage(ctx, true, () => { S.garageOffline = false; render(); })))), renderAppBar());
+    if (S.offline) {
+      const back = () => { S.offline = ''; render(); };
+      const page = S.offline === 'garage' ? renderGarage(ctx, true, back) : renderLibrary(null, back, render);
+      app.replaceChildren(top, h('div', { class: 'layout single' }, h('main', {}, ...nodes(page))), renderAppBar());
       return;
     }
     app.replaceChildren(top, liquidBackdrop(), renderSetup(), renderLog(), renderAppBar());
@@ -723,6 +799,7 @@ function renderTop() {
     h('div', { class: 'spacer' }),
     S.session && S.mods.size ? h('div', { class: 'car' }, h('b', {}, carTitle()), h('small', {}, carSummary())) : null,
     statusPills(),
+    h('button', { class: `btn ghost ${S.share ? 'sharing' : ''}`, onclick: openRemote, title: 'Share this car with a friend, or read the car of a friend' }, S.share ? 'Sharing car…' : S.mode === 'remote' ? 'Remote session' : 'Remote session'),
     h('button', { class: 'btn ghost', onclick: openReport, title: 'Save a file that explains a problem: app version, what was done and the last telegrams (VIN masked)' }, 'Report a problem'),
     S.session ? h('button', { class: 'btn ghost', onclick: disconnect }, 'Disconnect') : null,
   );
@@ -763,9 +840,9 @@ function reportData(description: string) {
     page: S.session ? `${S.page}${S.selected ? ` · ${moduleDef(S.selected).short}` : ''}` : 'start',
     cable: S.channel?.name ?? (preCable.present ? preCable.name : 'none'),
     mode: S.mode ?? 'not connected',
-    settings: { dtrMode: S.dtrMode, moduleFiles: files.count, safety: S.session?.safetyMode ?? 'read', simulator: S.mode === 'sim' ? S.simEngine : undefined },
+    settings: { dtrMode: S.dtrMode, moduleFiles: files.count, safety: S.session?.safetyMode ?? 'read' },
     log: S.log,
-    modules: E46_MODULES.filter((m) => S.mods.get(m.group)?.scan).map((m) => {
+    modules: ALL_E46_MODULES.filter((m) => S.mods.get(m.group)?.scan).map((m) => {
       const st = S.mods.get(m.group)!;
       return { short: m.short, variant: st.scan!.variant, ident: st.scan!.ident, faults: st.dtcs?.length, error: st.scan!.error ?? st.dtcError };
     }),
@@ -810,17 +887,23 @@ function renderSetup() {
       ),
       h('div', { class: 'start-card' },
         h('h2', {}, 'Simulator'),
-        h('p', {}, 'A simulated E46 on a 6½-minute trip that repeats: key on, cold start, warm-up at idle, city traffic, motorway and a run to top speed, warm idle, engine off.'),
-        h('label', { class: 'opt sim-pick' }, h('span', {}, 'Car'),
-          h('select', { 'aria-label': 'Simulated car', onchange: (e: Event) => { S.simEngine = (e.target as HTMLSelectElement).value as 'ms43' | 'ms45'; store.set('e46diag.simEngine', S.simEngine); } },
-            h('option', { value: 'ms43', selected: S.simEngine === 'ms43' }, '325i 2001 · MS43 (DS2)'),
-            h('option', { value: 'ms45', selected: S.simEngine === 'ms45' }, '325i 2004 · MS45 (KWP2000) + MRS5 airbag'))),
+        h('p', {}, 'A simulated 325i on a 6½-minute trip that repeats: key on, cold start, warm-up at idle, city traffic, motorway and a run to top speed, warm idle, engine off.'),
         h('button', { class: 'btn', onclick: () => connect('sim') }, 'Start simulator'),
       ),
-      h('div', { class: 'start-card' },
+      h('div', { class: 'start-card mini' },
         h('h2', {}, 'Garage'),
         h('p', {}, (() => { const g = loadGarage(); const n = g.cars.reduce((k, c) => k + c.scans.length, 0); return g.cars.length ? `${g.cars.length} ${g.cars.length === 1 ? 'car' : 'cars'} and ${n} saved ${n === 1 ? 'scan' : 'scans'}. Look back at past scans and compare them without the car.` : 'Saved cars and their scan history. Scan a car and save it to compare later scans with it.'; })()),
-        h('button', { class: 'btn', onclick: () => { S.garageOffline = true; render(); } }, 'Open garage'),
+        h('button', { class: 'btn', onclick: () => { S.offline = 'garage'; render(); } }, 'Open garage'),
+      ),
+      h('div', { class: 'start-card mini' },
+        h('h2', {}, 'Docs & Library'),
+        h('p', {}, 'How the app works and how to use each screen, the cars and modules it supports, the fault guides, and the diagnostic socket and bus diagrams.'),
+        h('button', { class: 'btn', onclick: () => { S.offline = 'library'; render(); } }, 'Open library'),
+      ),
+      h('div', { class: 'start-card mini' },
+        h('h2', {}, 'Remote session'),
+        h('p', {}, 'Read the car of a friend from the community: paste the invite code they send you. To share your own car, connect it first and use “Remote session” in the top bar.'),
+        h('button', { class: 'btn', onclick: openRemote }, 'Connect to a car'),
       ),
     ),
   );
@@ -834,8 +917,8 @@ function statusOf(st: ModState | undefined): { cls: string; text: string } {
   return st.dtcs.length ? { cls: 'fault', text: `${st.dtcs.length} ${st.dtcs.length === 1 ? 'fault' : 'faults'}` } : { cls: 'ok', text: 'OK' };
 }
 
-const PAGES: [Page, string][] = [['overview', 'Overview'], ['faults', 'Faults'], ['live', 'Live Data'], ['functions', 'Tests & Functions'], ['service', 'Service'], ['logger', 'Data Logger'], ['garage', 'Garage'], ['report', 'Report'], ['log', 'Log']];
-const foundModules = () => E46_MODULES.filter((m) => S.mods.get(m.group)?.scan?.variant);
+const PAGES: [Page, string][] = [['overview', 'Overview'], ['faults', 'Faults'], ['live', 'Live Data'], ['functions', 'Tests & Functions'], ['service', 'Service'], ['coding', 'Coding'], ['logger', 'Data Logger'], ['garage', 'Garage'], ['library', 'Library'], ['report', 'Report'], ['log', 'Log']];
+const foundModules = () => ALL_E46_MODULES.filter((m) => S.mods.get(m.group)?.scan?.variant);
 
 /** Side menu: sections of the app, safety state at the bottom. */
 function renderRail() {
@@ -843,14 +926,19 @@ function renderRail() {
   if (!rail) return;
   const faults = foundModules().reduce((n, m) => n + (S.mods.get(m.group)?.dtcs?.length ?? 0), 0);
   const service = S.session?.safetyMode === 'service';
-  rail.replaceChildren(
+  rail.replaceChildren(...nodes([
     ...PAGES.map(([p, label]) =>
       h('button', { class: 'nav', 'aria-current': S.page === p ? 'page' : 'false', onclick: () => go(p) },
         label, p === 'faults' && faults ? h('span', { class: 'count' }, String(faults)) : null)),
-    h('div', { class: `rail-foot ${service ? 'unlocked' : ''}` },
-      h('span', { class: `led ${service ? 'warn' : 'ok'}` }),
-      h('div', {}, h('b', {}, service ? 'Tests & resets unlocked' : 'Read-only mode'), h('small', {}, 'Coding & programming blocked'))),
-  );
+    S.mode === 'remote'
+      ? h('div', { class: 'rail-foot remote' },
+          h('span', { class: 'led ok' }),
+          h('div', {}, h('b', {}, 'Remote car'), h('small', {}, S.remoteAccess === 'tests' ? 'Read + tests, each approved by the owner' : 'Read only (set by the owner)')))
+      : h('div', { class: `rail-foot ${service ? 'unlocked' : ''}` },
+          h('span', { class: `led ${service ? 'warn' : 'ok'}` }),
+          h('div', {}, h('b', {}, service ? 'Tests & resets unlocked' : 'Read-only mode'), h('small', {}, 'Coding blocked, except the gauge curve'))),
+    S.share ? h('div', { class: 'rail-foot sharing' }, h('span', { class: 'led live' }), h('div', {}, h('b', {}, 'Car shared'), h('small', {}, S.share.access === 'read' ? 'Helper: read only' : 'Helper: read + tests'))) : null,
+  ]));
 }
 
 function go(p: Page) {
@@ -878,7 +966,7 @@ function select(g: string) {
 /** Module tabs along the top of the module pages. */
 function renderChips() {
   const found = foundModules();
-  const missing = E46_MODULES.filter((m) => S.mods.get(m.group)?.scan && !S.mods.get(m.group)!.scan!.variant).length;
+  const missing = ALL_E46_MODULES.filter((m) => S.mods.get(m.group)?.scan && !S.mods.get(m.group)!.scan!.variant).length;
   return h('div', { class: 'chips', role: 'tablist', 'aria-label': 'Modules' },
     found.map((m) => {
       const s = statusOf(S.mods.get(m.group));
@@ -893,10 +981,12 @@ function renderChips() {
 function renderMain() {
   const main = document.querySelector('main');
   if (!main) return;
-  const banner = renderHint();
+  const banner = renderHint() ?? renderRemoteBanner();
   const put = (xs: (Node | null)[]) => main.replaceChildren(...nodes([banner, ...xs]));
   if (S.page === 'overview') return put(renderOverview());
   if (S.page === 'service') return put(renderService(ctx));
+  if (S.page === 'coding') return put(renderCoding(ctx));
+  if (S.page === 'library') return put(renderLibrary(ctx));
   if (S.page === 'logger') return put(renderLogger(ctx));
   if (S.page === 'garage') return put(renderGarage(ctx));
   if (S.page === 'report') return put(renderReport());
@@ -950,17 +1040,18 @@ function renderDtcTab(m: ModuleDef): (Node | null)[] {
       ? h('div', { class: 'empty' }, h('strong', {}, 'Fault memory not read yet'), 'Press Read faults.')
       : !st.dtcs.length
         ? h('div', { class: 'empty clean' }, h('strong', {}, 'No faults stored'), 'The fault memory of this module is empty.')
-        : h('div', { class: 'dtcs' }, st.dtcs.map(dtcItem)),
+        : h('div', { class: 'dtcs' }, st.dtcs.map((d) => dtcItem(d, m))),
   ];
 }
 
-function dtcItem(d: Dtc) {
+function dtcItem(d: Dtc, m: ModuleDef) {
   const tags = [d.present === true ? 'Present' : d.present === false ? 'Not present now' : '', d.frequency !== null ? `Seen ${d.frequency}×` : '', d.pcode ?? ''].filter(Boolean);
   return h('details', { class: 'dtc' },
     h('summary', {},
       h('span', { class: 'code' }, dtcCode(d)),
       h('span', { class: 'txt' }, h('b', {}, d.text || 'Fault without description'), d.details.length ? h('span', {}, d.details.join(', ')) : null),
       h('span', { class: 'tags' }, tags.map((t) => h('span', { class: `tag ${t === 'Present' ? 'hot' : ''}` }, t))),
+      h('button', { class: 'btn ts-btn', title: 'What this fault means, likely causes, how to check and how to fix', onclick: (e: Event) => { e.preventDefault(); e.stopPropagation(); openTroubleshoot(ctx, m, d, dtcCode(d)); } }, 'Troubleshoot'),
     ),
     h('div', { class: 'dtc-body' },
       d.env.length
@@ -1203,7 +1294,7 @@ function renderLogPage(): (Node | null)[] {
 }
 
 function renderOverview(): (Node | null)[] {
-  const found = E46_MODULES.filter((m) => S.mods.get(m.group)?.scan?.variant);
+  const found = ALL_E46_MODULES.filter((m) => S.mods.get(m.group)?.scan?.variant);
   const total = found.reduce((n, m) => n + (S.mods.get(m.group)?.dtcs?.length ?? 0), 0);
   const read = found.filter((m) => S.mods.get(m.group)?.dtcs !== undefined || S.mods.get(m.group)?.dtcNA || S.mods.get(m.group)?.dtcError).length;
   return [
@@ -1219,6 +1310,9 @@ function renderOverview(): (Node | null)[] {
       h('button', { class: 'btn', disabled: !found.length, onclick: saveReport }, 'Save report'),
       h('button', { class: 'btn', disabled: !found.length || S.scanning || !!S.busy || found.some((m) => S.mods.get(m.group)?.dtcs === undefined && !S.mods.get(m.group)?.dtcNA && !S.mods.get(m.group)?.dtcError), onclick: () => saveCurrentScan(ctx), title: 'Keep this scan in the Garage to compare it later' }, S.busy === 'garage' ? 'Reading VIN…' : 'Save to Garage'),
       h('button', { class: 'btn', disabled: !found.length || found.some((m) => S.mods.get(m.group)?.availProgress), onclick: async () => { for (const m of found) await checkAvailability(m.group, true); } }, 'Re-check supported data'),
+      h('label', { class: 'opt inline', title: 'Navigation, telephone, steering wheel buttons, seat memory, rain sensor, steering angle sensor, headlight leveling, amplifier, CD changer… Each module that is not fitted adds about 2 seconds to the scan.' },
+        h('input', { type: 'checkbox', checked: S.scanOptional, disabled: S.scanning, onchange: (e: Event) => { S.scanOptional = (e.target as HTMLInputElement).checked; store.set('e46diag.scanOptional', S.scanOptional); if (S.scanOptional) void scan(); else renderMain(); } }),
+        h('span', {}, 'Include optional modules')),
     ),
     found.length
       ? h('div', { class: 'modgrid' }, found.map((m) => {
@@ -1286,7 +1380,27 @@ const ctx: PageCtx = {
   readAllFaults: async () => {
     for (const m of foundModules()) await readDtcs(m.group, false);
   },
+  goLive: (short) => {
+    const m = foundModules().find((x) => x.short === short);
+    if (!m) return;
+    select(m.group);
+    go('live');
+  },
+  goPage: (page) => go(page as Page),
 };
+
+/** Top of every screen while a remote session runs (owner: who is reading; helper: whose car this is). */
+function renderRemoteBanner() {
+  if (S.share)
+    return h('div', { class: 'msg info rm-banner' }, h('span', { class: 'led live' }),
+      h('span', {}, h('b', {}, 'Your car is shared. '), `${S.share.access === 'read' ? 'The helper can read faults and live data.' : 'The helper can read, and ask you to run tests.'} Clearing faults and tests ask you first. ${S.share.host.requests} requests.`),
+      h('button', { class: 'btn', onclick: () => S.share?.stop() }, 'Stop sharing'));
+  if (S.mode === 'remote')
+    return h('div', { class: 'msg info rm-banner' }, h('span', { class: 'led ok' }),
+      h('span', {}, h('b', {}, 'Remote car. '), `You are reading a car shared by its owner (${S.remoteAccess === 'tests' ? 'read + tests: the owner approves each test and fault clearing' : 'read only; clearing faults asks the owner'}). Each reading crosses the internet, so live data is slower than at the car.`),
+      h('button', { class: 'btn', onclick: disconnect }, 'Leave'));
+  return null;
+}
 
 // ------------------------------------------------------------------ boot
 document.documentElement.lang = 'en';

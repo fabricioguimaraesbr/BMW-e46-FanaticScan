@@ -83,6 +83,10 @@ export class HybridSession implements Session {
   listJobs(variant: string) {
     return this.isNative(variant) ? this.native.listJobs(variant) : this.diag.listJobs(variant);
   }
+  /** Raw DS2 exchange (cluster EEPROM for the gauge curve), on the same queue as every job. */
+  ds2Raw(addr: number, data: number[], timeout?: number) {
+    return this.serial(() => this.native.ds2Raw(addr, data, timeout));
+  }
   run(variant: string, job: string, args?: string) {
     return this.route(variant, () => this.diag.run(variant, job, args), () => this.native.run(variant, job));
   }

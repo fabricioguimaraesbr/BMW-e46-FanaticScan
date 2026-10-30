@@ -15,7 +15,7 @@ export interface ModInfo {
 
 export interface PageCtx {
   session(): Session | null;
-  mode(): 'cable' | 'sim' | null;
+  mode(): 'cable' | 'sim' | 'remote' | null;
   scanning(): boolean;
   /** modules that answered the scan, in E46_MODULES order */
   found(): ModInfo[];
@@ -33,6 +33,10 @@ export interface PageCtx {
   carTitle(): string;
   log(cls: string, text: string): void;
   rerender(): void;
+  /** opens Live Data of a found module (by its short name, e.g. 'DME') */
+  goLive(short: string): void;
+  /** switches to another screen (service, library…) */
+  goPage(page: string): void;
   /** re-reads the fault memory of every found module */
   readAllFaults(): Promise<void>;
 }
