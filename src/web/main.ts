@@ -22,6 +22,8 @@ import { loadGarage, renderGarage, saveCurrentScan } from './garagePage';
 import { loggerRunning, renderLogger, resetLogger, stopLogger } from './loggerPage';
 import { renderService, resetService } from './servicePage';
 import { renderCoding, resetCoding } from './codingPage';
+import { renderVehicle, resetVehicle } from './vehiclePage';
+import { renderChecks, resetChecks, stopChecks } from './checksPage';
 import { renderLibrary } from './libraryPage';
 import { openTroubleshoot } from './troubleshoot';
 import { ShareState, approvalDialog, openRemoteDialog } from './remote';
@@ -37,7 +39,7 @@ import { confirmDialog, download, h, nodes, stamp, store } from './dom';
 
 // ------------------------------------------------------------------ state
 /** Sections of the side menu. Module pages (faults, live, functions) show the module tabs on top. */
-type Page = 'overview' | 'faults' | 'live' | 'functions' | 'service' | 'coding' | 'logger' | 'garage' | 'library' | 'report' | 'log';
+type Page = 'overview' | 'vehicle' | 'faults' | 'live' | 'functions' | 'checks' | 'service' | 'coding' | 'logger' | 'garage' | 'library' | 'log';
 const MODULE_PAGES: Page[] = ['faults', 'live', 'functions'];
 interface ModState {
   scan?: ScanEntry;
@@ -222,6 +224,8 @@ async function disconnect() {
   S.share?.stop();
   S.share = null;
   resetCoding();
+  resetVehicle();
+  resetChecks();
   if (S.remote) {
     const r = S.remote;
     S.remote = null;
@@ -917,7 +921,13 @@ function statusOf(st: ModState | undefined): { cls: string; text: string } {
   return st.dtcs.length ? { cls: 'fault', text: `${st.dtcs.length} ${st.dtcs.length === 1 ? 'fault' : 'faults'}` } : { cls: 'ok', text: 'OK' };
 }
 
-const PAGES: [Page, string][] = [['overview', 'Overview'], ['faults', 'Faults'], ['live', 'Live Data'], ['functions', 'Tests & Functions'], ['service', 'Service'], ['coding', 'Coding'], ['logger', 'Data Logger'], ['garage', 'Garage'], ['library', 'Library'], ['report', 'Report'], ['log', 'Log']];
+/** Side menu, in sections: the car, its data, workshop tools, and the rest. */
+const SECTIONS: [string, [Page, string][]][] = [
+  ['Car', [['overview', 'Overview'], ['vehicle', 'Vehicle'], ['faults', 'Faults']]],
+  ['Data', [['live', 'Live Data'], ['logger', 'Data Logger']]],
+  ['Workshop', [['checks', 'Guided checks'], ['service', 'Service'], ['functions', 'Tests & Functions'], ['coding', 'Coding']]],
+  ['More', [['garage', 'Garage'], ['library', 'Library'], ['log', 'Log']]],
+];
 const foundModules = () => ALL_E46_MODULES.filter((m) => S.mods.get(m.group)?.scan?.variant);
 
 /** Side menu: sections of the app, safety state at the bottom. */
@@ -927,9 +937,12 @@ function renderRail() {
   const faults = foundModules().reduce((n, m) => n + (S.mods.get(m.group)?.dtcs?.length ?? 0), 0);
   const service = S.session?.safetyMode === 'service';
   rail.replaceChildren(...nodes([
-    ...PAGES.map(([p, label]) =>
-      h('button', { class: 'nav', 'aria-current': S.page === p ? 'page' : 'false', onclick: () => go(p) },
-        label, p === 'faults' && faults ? h('span', { class: 'count' }, String(faults)) : null)),
+    ...SECTIONS.flatMap(([title, pages]) => [
+      h('div', { class: 'rail-sep' }, title),
+      ...pages.map(([p, label]) =>
+        h('button', { class: 'nav', 'aria-current': S.page === p ? 'page' : 'false', onclick: () => go(p) },
+          label, p === 'faults' && faults ? h('span', { class: 'count' }, String(faults)) : null)),
+    ]),
     S.mode === 'remote'
       ? h('div', { class: 'rail-foot remote' },
           h('span', { class: 'led ok' }),
@@ -944,6 +957,7 @@ function renderRail() {
 function go(p: Page) {
   if (p !== 'live') stopLive();
   if (p !== 'logger') stopLogger();
+  if (p !== 'checks') stopChecks();
   if (MODULE_PAGES.includes(p) && !S.selected) S.selected = foundModules()[0]?.group ?? null;
   S.page = p;
   renderRail();
@@ -989,7 +1003,8 @@ function renderMain() {
   if (S.page === 'library') return put(renderLibrary(ctx));
   if (S.page === 'logger') return put(renderLogger(ctx));
   if (S.page === 'garage') return put(renderGarage(ctx));
-  if (S.page === 'report') return put(renderReport());
+  if (S.page === 'vehicle') return put(renderVehicle(ctx));
+  if (S.page === 'checks') return put(renderChecks(ctx));
   if (S.page === 'log') return put(renderLogPage());
   if (!S.selected || !modState(S.selected).scan?.variant) S.selected = foundModules()[0]?.group ?? null;
   if (!S.selected) {
@@ -1266,18 +1281,6 @@ function saveReport() {
   h('a', { href: URL.createObjectURL(new Blob([reportLines().join('\n')], { type: 'text/plain' })), download: `e46-report-${new Date().toISOString().slice(0, 10)}.txt` }).click();
 }
 
-function renderReport(): (Node | null)[] {
-  const found = foundModules();
-  return [
-    h('div', { class: 'mh' }, h('div', {}, h('p', { class: 'kicker' }, 'Vehicle report'), h('h1', {}, 'Report'))),
-    h('div', { class: 'toolbar' },
-      h('button', { class: 'btn primary', disabled: !found.length, onclick: saveReport }, 'Save as text file'),
-      h('button', { class: 'btn', disabled: !found.length || S.scanning || !!S.busy, onclick: async () => { for (const m of found) await readDtcs(m.group, false); } }, 'Read all faults again'),
-      h('span', { class: 'note' }, 'Identification and fault memory of every module, to keep or send.')),
-    found.length ? h('pre', { class: 'report' }, reportLines().join('\n')) : h('div', { class: 'empty' }, h('strong', {}, 'Nothing to report yet'), 'Scan the car first.'),
-  ];
-}
-
 function renderLogPage(): (Node | null)[] {
   const box = h('div', { class: 'log log-page' }, S.log.map((l) => h('div', { class: l.cls }, l.text)));
   requestAnimationFrame(() => { box.scrollTop = box.scrollHeight; });
@@ -1309,10 +1312,14 @@ function renderOverview(): (Node | null)[] {
       h('button', { class: 'btn', disabled: S.scanning || !!S.busy, onclick: async () => { for (const m of found) await readDtcs(m.group, false); } }, 'Read all faults'),
       h('button', { class: 'btn', disabled: !found.length, onclick: saveReport }, 'Save report'),
       h('button', { class: 'btn', disabled: !found.length || S.scanning || !!S.busy || found.some((m) => S.mods.get(m.group)?.dtcs === undefined && !S.mods.get(m.group)?.dtcNA && !S.mods.get(m.group)?.dtcError), onclick: () => saveCurrentScan(ctx), title: 'Keep this scan in the Garage to compare it later' }, S.busy === 'garage' ? 'Reading VIN…' : 'Save to Garage'),
-      h('button', { class: 'btn', disabled: !found.length || found.some((m) => S.mods.get(m.group)?.availProgress), onclick: async () => { for (const m of found) await checkAvailability(m.group, true); } }, 'Re-check supported data'),
-      h('label', { class: 'opt inline', title: 'Navigation, telephone, steering wheel buttons, seat memory, rain sensor, steering angle sensor, headlight leveling, amplifier, CD changer… Each module that is not fitted adds about 2 seconds to the scan.' },
-        h('input', { type: 'checkbox', checked: S.scanOptional, disabled: S.scanning, onchange: (e: Event) => { S.scanOptional = (e.target as HTMLInputElement).checked; store.set('e46diag.scanOptional', S.scanOptional); if (S.scanOptional) void scan(); else renderMain(); } }),
-        h('span', {}, 'Include optional modules')),
+      h('details', { class: 'more-menu' },
+        h('summary', { class: 'btn ghost' }, 'Scan options'),
+        h('div', { class: 'more-pop' },
+          h('label', { class: 'opt', title: 'Navigation, telephone, steering wheel buttons, seat memory, rain sensor, steering angle sensor, headlight leveling, amplifier, CD changer…' },
+            h('input', { type: 'checkbox', checked: S.scanOptional, disabled: S.scanning, onchange: (e: Event) => { S.scanOptional = (e.target as HTMLInputElement).checked; store.set('e46diag.scanOptional', S.scanOptional); if (S.scanOptional) void scan(); else renderMain(); } }),
+            h('span', {}, h('b', {}, 'Include optional modules'), h('small', {}, 'Navigation, phone, seats, rain sensor… Each module that is not fitted adds about 2 s to the scan.'))),
+          h('button', { class: 'btn', disabled: !found.length || found.some((m) => S.mods.get(m.group)?.availProgress), onclick: async () => { for (const m of found) await checkAvailability(m.group, true); } }, 'Re-check supported data'),
+          h('button', { class: 'btn', disabled: S.scanning, onclick: () => void scan() }, 'Scan again'))),
     ),
     found.length
       ? h('div', { class: 'modgrid' }, found.map((m) => {

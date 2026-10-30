@@ -62,3 +62,10 @@ e mande o CODIGO DE CONVITE (WhatsApp, e-mail). O amigo cola em "Connect to a ca
 devolve o CODIGO DE RESPOSTA; cole e pronto. Os dois precisam de internet.
 Somente leitura por padrao; apagar erros e testes pedem a sua aprovacao na hora.
 Gravar no carro (inclusive o ponteiro) nunca e possivel pela sessao remota.
+
+VEHICLE E VERIFICACOES GUIADAS
+------------------------------
+Vehicle: data de fabricacao, cor e opcionais gravados no painel, e se o chassi e a
+quilometragem batem entre os modulos.
+Guided checks: termostato, nivel do oleo do cambio automatico, VANOS, sondas lambda e
+falhas de ignicao por cilindro, com passo a passo. So leitura.

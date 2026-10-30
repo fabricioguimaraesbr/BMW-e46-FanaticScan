@@ -30,6 +30,14 @@ const WRITE_OVERRIDES: Record<string, string[]> = {
   ews3: ['STEUERN_SELBSTTEST'],
   ews3d: ['STEUERN_SELBSTTEST'],
 };
+/**
+ * Jobs whose name matches a write pattern but that only read (checked in the SGBD: their telegrams are the cluster's
+ * read services 02 01 / 06 03). Keyed like WRITE_OVERRIDES.
+ */
+const READ_OVERRIDES: Record<string, string[]> = {
+  kombi46: ['AIF_GWSZ_LESEN', 'GWSZ_MINUS_OFFSET_LESEN', 'GWSZ_OFFSET_LESEN'],
+  kombi46r: ['STATUS_AIF_GWSZ_LESEN', 'GWSZ_MINUS_OFFSET_LESEN', 'GWSZ_OFFSET_LESEN'],
+};
 /** Job description words that mean a permanent write, whatever the job is called. */
 const WRITE_DOC = /(?<!zu )schreib|programmier|transponder|eeprom|flash|codier/i;
 
@@ -39,9 +47,10 @@ const WRITE_DOC = /(?<!zu )schreib|programmier|transponder|eeprom|flash|codier/i
  * @param comment the job's description from the SGBD: a test or reset described as writing is treated as a write
  */
 export function classifyJob(name: string, sgbd?: string, comment?: string): JobSafety {
-  const base = classifyByName(name);
   const n = name.toUpperCase();
   const file = (sgbd ?? '').toLowerCase().replace(/\.(prg|grp)$/, '');
+  if (READ_OVERRIDES[file]?.includes(n)) return 'read';
+  const base = classifyByName(name);
   if (base !== 'write' && (WRITE_OVERRIDES[file]?.includes(n) || WRITE_OVERRIDES['*']?.includes(n))) return 'write';
   if ((base === 'test' || base === 'reset') && comment && WRITE_DOC.test(comment)) return 'write';
   return base;

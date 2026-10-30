@@ -75,6 +75,7 @@ function encodeDtc(code: string): [number, number] {
 class Gs8604 extends DtcEcu {
   drive = new DriveCycle(340);
   protected status(d: Uint8Array): number[] {
+    if (d[0] === 0x06 && d[1] === 0x00) return [0xa0, ...new Array(d[5] || 0x2e).fill(0)]; // AIF: empty
     if (d[0] === 0x0b && d[1] === 0x03) {
       const e = this.drive.state();
       const gear = e.gear;
@@ -184,6 +185,39 @@ class Ms43 extends DtcEcu {
   protected status(d: Uint8Array): number[] {
     // ECU_CONFIG / ABGAS_VARIANTE_LESEN: CAT + AT, A/C + MIL + e-fan + cluster, ASC + MFL + pre/post-cat sensors (no SLP, no flap)
     if (d[0] === 0x0b && d[1] === 0x94) return [0xa0, 0x16, 0x9a, 0xca, 0, 0, 0, 0, 0];
+    const e0 = this.engine();
+    const warm = e0.running && e0.clt > 60;
+    // VANOS target / actual (STATUS_VANOS_NW_LAGE_IST_SOLL_REF_*): the cam follows its target with a small lag
+    if (d[0] === 0x0b && d[1] === 0x90) {
+      const b = new Array(40).fill(0);
+      const wobble = Math.sin(Date.now() / 700);
+      const inSoll = e0.vanosIn + (e0.running ? 1.2 * wobble : 0);
+      const outSoll = e0.vanosOut - (e0.running ? 1.0 * wobble : 0);
+      b[1] = u8((inSoll - 60) / 0.375);
+      b[7] = u8((-60 - outSoll) / 0.375);
+      b[20] = u8((e0.vanosIn - 60) / 0.375);
+      b[21] = u8((-60 - e0.vanosOut) / 0.375);
+      return [0xa0, ...b];
+    }
+    // pre-cat oxygen sensor voltage (STATUS_L_SONDE / _2): switching about once a second in closed loop
+    if (d[0] === 0x0b && d[1] === 0x02 && d[2] === 0x0e) {
+      const bank = d[5] === 2 ? 1 : 0;
+      const v = !e0.running ? 0.02 : warm ? 0.45 + 0.38 * Math.sin(Date.now() / 170 + bank * 1.7) : 0.45;
+      return [0xa0, ...u16(v / 0.004883), ...new Array(6).fill(0)];
+    }
+    // mixture adaptations (STATUS_LAMBDA_ADD_* / MUL_*)
+    if (d[0] === 0x0b && d[1] === 0x91) return [0xa0, 0, ...u16((0.6 + 131.072) / 0.004), ...u16((2.1 + 50) / 0.0015259), ...u16((0.4 + 131.072) / 0.004), ...u16((1.6 + 50) / 0.0015259), ...new Array(20).fill(0)];
+    // rough running per cylinder and misfire counters (STATUS_SYSTEMCHECK_LAUFUNRUHE), firing order 1-5-3-6-2-4
+    if (d[0] === 0x2b && d[1] === 0x05) {
+      const b = [0x01];
+      const rough: Record<number, number> = { 1: 0.32, 5: 0.95, 3: 0.36, 6: 0.3, 2: 0.41, 4: 0.34 };
+      const count: Record<number, number> = { 1: 0, 5: e0.running ? 4 : 0, 3: 0, 6: 0, 2: 0, 4: 0 };
+      for (const c of [1, 5, 3, 6, 2, 4]) b.push(...u16(e0.running ? (rough[c] + 0.04 * Math.sin(Date.now() / 900 + c)) / 0.00122 : 0));
+      for (const c of [1, 5, 3, 6, 2, 4]) b.push(...u16(count[c]));
+      return [0xa0, ...b, ...new Array(15).fill(0)];
+    }
+    // user information field (AIF_LESEN): empty, as on many original DMEs
+    if (d[0] === 0x06 && d[1] === 0x00) return [0xa0, ...new Array(d[5] || 0x2e).fill(0)];
     if (d[0] === 0x0b && d[1] === 0x03) {
       const e = this.engine();
       const b = new Array(41).fill(0);
@@ -216,6 +250,9 @@ class Ms43 extends DtcEcu {
   }
 }
 
+/** Factory order of the simulated car (made up for the demo: a 2001 325i automatic). */
+export const SIM_FA = 'E46_#0301*AV31%0354&N6SW$205$210$249$302$401$423$428$441$473$494$508$520$522$534$540$550$676$785';
+
 /**
  * Instrument cluster KOMBI46 (up to 2002) or KOMBI46R (2003+) at 0x80: binary ident (diagnosis index 53 / 64), empty
  * fault memory, the coolant temperature it gets over CAN, and an EEPROM with the coolant gauge curve where the real
@@ -246,6 +283,16 @@ export class Kombi46 extends DtcEcu {
     }
     if (d[0] === 0x06 && d[1] === 0x0a && this.kind === 'kombi46') return [0xa0, u8((this.drive.state().clt + 48) / 0.75)];
     if (d[0] === 0x12) return [0xa0];
+    // odometer (AIF_GWSZ_LESEN) and short VIN (AIF_FG_NR_LESEN), BCD like the real cluster
+    if (d[0] === 0x02 && d[1] === 0x01) return [0xa0, 0x00, 0x18, 0x64, 0x32]; // 186 432 km
+    if (d[0] === 0x02 && d[1] === 0x02) return [0xa0, 0x00, 0x4b, 0x4c, 0x12, 0x34, 0x50]; // KL12345
+    // factory order (C_FA_LESEN): ASCII, words 0x10-0xDF of memory 08, ended by 00
+    if (d[0] === 0x06 && d[1] === 0x08) {
+      const w = (d[3] << 8) | d[4];
+      const n = d[5];
+      const fa = new TextEncoder().encode(SIM_FA);
+      return [0xa0, ...Array.from({ length: n * 2 }, (_, k) => { const i = w * 2 + k - 0x20; return i >= 0 && i < fa.length ? fa[i] : 0; })];
+    }
     return super.status(d);
   }
 }

@@ -112,6 +112,12 @@ Toda função dos arquivos da BMW é classificada (`src/core/api/safety.ts`) e a
 
 Funções desconhecidas são tratadas como escrita (bloqueadas). Além do nome, o programa lê a descrição da função no arquivo da BMW: um "teste" ou "reset" descrito como gravação (por exemplo `STEUERN_SELBSTTEST` do EWS, que grava no transponder da chave, ou `STEUERN_*_PROGRAMM` da ME9) é tratado como escrita.
 
+## Vehicle e Guided checks (v1.4)
+
+- **Vehicle:** lê a ordem de fábrica (FA) do painel (`C_FA_LESEN`): data de produção, código de tipo, cor (nome para as cores comuns), estofamento e códigos de opcionais (descrição para os opcionais comuns do E46). Compara o chassi gravado no painel, EWS, LCM, DME e câmbio, e a quilometragem do painel com a gravada na última programação da DME/câmbio (`src/core/api/vehicle.ts`). As leituras de km do painel (`AIF_GWSZ_LESEN` etc.) foram liberadas como leitura em `safety.ts`; as gravações de km continuam bloqueadas.
+- **Guided checks** (`src/core/api/checks.ts`, tela `src/web/checksPage.ts`): termostato e aquecimento (temperatura do motor e saída do radiador desde a partida fria), nível do óleo do câmbio 5HP19 (janela de 30–50 °C), VANOS alvo × real (admissão e escape), sondas lambda pré-catalisador (oscilação e correção de mistura) e falhas de ignição por cilindro (irregularidade e contador). Só leitura; o "misfire check" da DME é opcional e exige "Unlock tests & resets". Escritas para MS43 e GS8.60.4.
+- Menu lateral em seções: Car (Overview, Vehicle, Faults), Data (Live Data, Data Logger), Workshop (Guided checks, Service, Tests & Functions, Coding), More (Garage, Library, Log). O relatório em texto ficou no botão "Save report" da Overview.
+
 ## Ponteiro de temperatura (Coding)
 
 O ponteiro do E46 fica parado no meio de 75 a 115 °C. A tela **Coding** lê o EEPROM do painel (512 bytes no KOMBI46, até ~2002; 2 KB no KOMBI46R, 2003+), salva o backup (`e46-kombi46-eeprom-AAAA-MM-DD-HHMM.bin`), encontra a curva (byte 0x0F0 no layout antigo: pares temperatura/ângulo; perto de 0x34D no novo: só temperaturas) e oferece as curvas do guia do E46Fanatics (fábrica, Revisão #1 90–100 °C, Revisão #2 sem buffer; no layout novo também a curva do M3) ou pontos próprios, com gráfico, ponteiro de prévia, temperatura atual do motor e comparação dos bytes. Depois de gravar, "Restart cluster" reinicia o painel (ou desligar e ligar a ignição).
