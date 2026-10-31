@@ -47,6 +47,10 @@ jobs:
           gh release delete android-latest --yes --cleanup-tag || true
           gh release create android-latest "$APK" --title "Android app $V" --prerelease \
             --notes "Built from ${GITHUB_SHA::7}. Install on Android 7 or newer; the cable goes in through a USB OTG adapter."
+          # one release per version too, so older APKs stay available
+          gh release delete "android-v$V" --yes --cleanup-tag || true
+          gh release create "android-v$V" "$APK" --title "Android app $V" --prerelease --target "$GITHUB_SHA" \
+            --notes "Built from ${GITHUB_SHA::7}."
       # the Actions API is not always reachable from where the app is developed: keep the log of a failed build as a release asset
       - name: Publish build log on failure
         if: failure()
