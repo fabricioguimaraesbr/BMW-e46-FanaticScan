@@ -51,6 +51,10 @@ Quem vai usar o programa (Windows ou Mac, inclusive M1) **não precisa instalar 
 
 O Safari e o Firefox não têm Web Serial; neles só o simulador funciona.
 
+### Android (celular)
+
+O Chrome do Android não tem Web Serial, mas tem WebUSB. Nele o programa usa um driver próprio do chip FTDI (`src/web/WebUsbFtdiChannel.ts`, protocolo dos drivers abertos libftdi/ftdi_sio): o mesmo cabo K+DCAN ou do BMW Scanner, ligado ao celular por um adaptador OTG (USB-A fêmea → USB-C). A página precisa abrir por HTTPS (ou do disco). Como no celular não há atalho para juntar a pasta `modulos`, a tela inicial tem **Choose module files**: o usuário escolhe os próprios `.prg`/`.grp` uma vez e eles ficam só naquele navegador (IndexedDB). Sem arquivos, funciona em plug & play. iPhone e iPad não aceitam cabos USB-serial: lá só com adaptador sem fio e app nativo.
+
 ### Cabo
 
 - **K+DCAN:** use o modo **K-line** (chave do cabo, ou ponte entre os pinos 7 e 8). O E46 2001 não tem D-CAN.

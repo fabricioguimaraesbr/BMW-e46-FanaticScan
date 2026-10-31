@@ -35,6 +35,10 @@ import { drawChart } from './chart';
 import { formatNumber } from './gauge';
 import logoSvg from './assets/e46fanatics.svg?raw';
 import { WebSerialChannel, watchCable, webSerialAvailable } from './WebSerialChannel';
+import { WebUsbFtdiChannel, watchUsbCable, webUsbAvailable } from './WebUsbFtdiChannel';
+
+/** Desktop Chrome/Edge: Web Serial (the OS drives the FTDI chip). Chrome on Android: WebUSB with our own FTDI driver. */
+const cableApi = (): 'serial' | 'usb' | null => (webSerialAvailable() ? 'serial' : webUsbAvailable() ? 'usb' : null);
 import { confirmDialog, download, h, nodes, stamp, store } from './dom';
 
 // ------------------------------------------------------------------ state
@@ -170,7 +174,7 @@ setInterval(updatePills, 2000);
 async function connect(mode: 'cable' | 'sim') {
   S.connError = '';
   try {
-    const ch = mode === 'sim' ? new SimChannel(createE46({ drive: (simDrive = new DriveCycle(0)) })) : await WebSerialChannel.request();
+    const ch = mode === 'sim' ? new SimChannel(createE46({ drive: (simDrive = new DriveCycle(0)) })) : cableApi() === 'serial' ? await WebSerialChannel.request() : await WebUsbFtdiChannel.request();
     const iface = new ObdInterface(ch, {
       dtrMode: mode === 'sim' ? 'off' : S.dtrMode,
       onHint: (k) => {
@@ -215,7 +219,10 @@ async function connect(mode: 'cable' | 'sim') {
     scan();
   } catch (e) {
     const m = (e as Error).message ?? String(e);
-    if (!/No port selected|cancel/i.test(m)) S.connError = `Could not open the cable: ${m}. Close INPA or BMW Scanner if they are using the port.`;
+    if (!/No port selected|No device selected|cancel/i.test(m))
+      S.connError = cableApi() === 'usb'
+        ? `Could not open the cable: ${m}. Unplug the cable and plug it in again, and allow Chrome to use it when Android asks.`
+        : `Could not open the cable: ${m}. Close INPA or BMW Scanner if they are using the port.`;
     render();
   }
 }
@@ -873,8 +880,33 @@ function openReport() {
   text.focus();
 }
 
+/**
+ * Phone (Android): there is no launcher to join the modulos folder to the page, so the user picks
+ * their own .prg/.grp files once; they stay in this browser only (IndexedDB). Nothing is uploaded.
+ */
+function phoneModuleFiles() {
+  if (files.embedded)
+    return h('p', { class: 'start-note' }, `${files.count} module files built into this page.`);
+  const input = h('input', { type: 'file', multiple: true, accept: '.prg,.grp,.PRG,.GRP', style: 'display:none' }) as HTMLInputElement;
+  input.onchange = async () => {
+    if (!input.files?.length) return;
+    const n = await files.addFiles(input.files);
+    S.connError = n ? '' : 'None of the chosen files is a module file (.prg / .grp).';
+    render();
+  };
+  return h('div', { class: 'start-note' },
+    files.count
+      ? h('span', {}, `${files.count} module files on this phone. `)
+      : h('span', {}, 'No module files on this phone: plug & play mode (engine over OBD-II, every module identified). To read every module, choose your .prg and .grp files once; they stay on this phone. '),
+    input,
+    h('button', { class: 'btn', onclick: () => input.click() }, files.count ? 'Add files' : 'Choose module files'),
+    files.count ? h('button', { class: 'btn', onclick: async () => { await files.clear(); render(); } }, 'Remove') : null,
+  );
+}
+
 function renderSetup() {
-  const hasSerial = webSerialAvailable();
+  const api = cableApi();
+  const hasSerial = !!api;
   return h('section', { class: 'setup' },
     logo('hero-logo'),
     h('h1', {}, 'BMW E46 diagnostics'),
@@ -883,9 +915,10 @@ function renderSetup() {
       h('div', { class: 'start-card' },
         h('h2', {}, 'Connect to the car'),
         h('p', {}, 'Plug the cable into the OBD port and turn the key to position 2. On a K+DCAN cable, use K-line mode with OBD pins 7 and 8 joined (the switch position that does it depends on the cable).'),
-        files.count ? null : h('p', { class: 'start-note' }, 'No module files in the modulos folder: plug & play mode (engine over OBD-II, every module identified).'),
+        api === 'usb' ? h('p', { class: 'start-note' }, 'Phone: plug the cable in with a USB OTG adapter (USB-A female to USB-C or micro-USB) and allow Chrome to use it.') : null,
+        api === 'usb' ? phoneModuleFiles() : files.count ? null : h('p', { class: 'start-note' }, 'No module files in the modulos folder: plug & play mode (engine over OBD-II, every module identified).'),
         S.connError ? h('div', { class: 'msg err' }, S.connError) : null,
-        !hasSerial ? h('div', { class: 'msg warn' }, 'This browser cannot access USB ports. Use Chrome or Edge on Mac or Windows to connect the cable. The simulator works in any browser.') : null,
+        !hasSerial ? h('div', { class: 'msg warn' }, 'This browser cannot access USB ports. Use Chrome or Edge on Mac or Windows, or Chrome on Android, to connect the cable. iPhone and iPad cannot use USB cables. The simulator works in any browser.') : null,
         cableOptions(),
         h('button', { class: 'btn primary', disabled: !hasSerial, onclick: () => connect('cable') }, 'Connect cable'),
       ),
@@ -1415,9 +1448,11 @@ document.title = 'E46Fanatics Scan';
 files
   .loadEmbedded()
   .catch(() => 0)
+  // phones have no launcher: their module files live in IndexedDB
+  .then((n) => (n || cableApi() !== 'usb' ? n : files.restore()))
   .then(() => render())
   .then(() =>
-    watchCable((present, name) => {
+    (cableApi() === 'usb' ? watchUsbCable : watchCable)((present, name) => {
       preCable = { present, name };
       updatePills();
     }),
