@@ -10,6 +10,7 @@ import type { JobResponse, ResultSet } from '../ediabas/Ediabas';
 import { ResultType } from '../ediabas/results';
 import type { ByteChannel } from '../transport/ByteChannel';
 import { ObdInterface } from '../transport/ObdInterface';
+import type { Elm327, ObdTransport } from './elm327';
 import { Iso9141 } from './iso9141';
 import { Obd2, PID_BY_ID, pidKey } from './obd2';
 
@@ -24,7 +25,10 @@ const INFO_PIDS = [0x01, 0x03, 0x1c, 0x1f, 0x21];
 
 export interface NativeOptions {
   channel: ByteChannel;
-  iface: ObdInterface; // DS2 framing (9600 8E1)
+  /** DS2 framing (9600 8E1). Absent with an ELM327 adapter, which cannot send DS2. */
+  iface?: ObdInterface;
+  /** OBD-II over an ELM327 adapter instead of the K-line (engine only). */
+  elm?: Elm327;
   onTraffic?: (dir: 'tx' | 'rx' | 'info', bytes: Uint8Array | string) => void;
   onLink?: (s: 'answer' | 'noanswer' | 'nocable') => void;
   onJob?: (r: JobResponse, ms: number) => void;
@@ -62,14 +66,14 @@ export function decodeDs2Ident(p: Uint8Array): Record<string, string | number> {
 export class NativeSession implements Session {
   readonly kind = 'native' as const;
   safetyMode: SafetyMode = 'read';
-  readonly iso: Iso9141;
+  readonly iso: ObdTransport;
   readonly obd: Obd2;
   private rotate = 0;
   private cache = new Map<number, number | string>();
   private queue: Promise<unknown> = Promise.resolve();
 
   constructor(private opts: NativeOptions) {
-    this.iso = new Iso9141(opts.channel, { onTraffic: opts.onTraffic, onLink: opts.onLink });
+    this.iso = opts.elm ?? new Iso9141(opts.channel, { onTraffic: opts.onTraffic, onLink: opts.onLink });
     this.obd = new Obd2(this.iso);
   }
 
@@ -82,7 +86,13 @@ export class NativeSession implements Session {
   }
 
   /** DS2 request at 9600 8E1 (the OBD-II session is dropped while DS2 talks). */
+  /** ELM327 adapter: OBD-II of the engine only. */
+  get elmOnly() {
+    return !this.opts.iface;
+  }
+
   private async ds2(addr: number, data: number[], timeout = 1000, repeats = 1): Promise<Uint8Array | null> {
+    if (!this.opts.iface) return null;
     if (this.iso.isReady) {
       this.iso.release();
       this.opts.iface.resetLine();
@@ -98,6 +108,7 @@ export class NativeSession implements Session {
   /** Raw DS2 exchange (whole answer frame, any status), serialized with everything else on the line. */
   ds2Raw(addr: number, data: number[], timeout = 1000): Promise<Uint8Array | null> {
     return this.serial(async () => {
+      if (!this.opts.iface) return null;
       if (this.iso.isReady) {
         this.iso.release();
         this.opts.iface.resetLine();
@@ -116,7 +127,7 @@ export class NativeSession implements Session {
   }
 
   private ensureObd() {
-    this.opts.iface.resetLine();
+    this.opts.iface?.resetLine();
     return this.iso.isReady || this.iso.init();
   }
 
@@ -124,6 +135,13 @@ export class NativeSession implements Session {
     return this.serial(async () => {
       const out: ScanEntry[] = [];
       for (const m of modules) {
+        if (this.elmOnly && m.address !== 0x12) {
+          // an ELM327 cannot reach the DS2 modules: listed as not found, without waiting
+          const e: ScanEntry = { module: m, variant: null, ident: {} };
+          out.push(e);
+          onEntry?.(e);
+          continue;
+        }
         const t0 = Date.now();
         const payload = await this.ds2(m.address, [0x00], 600, 0);
         let e: ScanEntry = { module: m, variant: payload ? `native:${m.address.toString(16).padStart(2, '0')}` : null, ident: payload ? decodeDs2Ident(payload) : {} };
@@ -132,6 +150,10 @@ export class NativeSession implements Session {
           if (await this.ensureObd()) e = { module: m, variant: ENGINE_VARIANT, ident: { ID_PROTOCOL: 'OBD-II' } };
         }
         if (m.address === 0x12 && e.variant) e.ident.ID_PROTOCOL = e.ident.ID_PROTOCOL ?? 'DS2 + OBD-II';
+        if (m.address === 0x12 && e.variant && this.opts.elm) {
+          e.ident.ID_PROTOCOL = `OBD-II via ELM327${this.opts.elm.protocol ? ` (${this.opts.elm.protocol})` : ''}`;
+          if (this.opts.elm.version) e.ident.ID_ADAPTER = this.opts.elm.version;
+        }
         this.log(m.group.toUpperCase(), 'IDENT', e.variant ? undefined : 'No response', t0);
         out.push(e);
         onEntry?.(e);

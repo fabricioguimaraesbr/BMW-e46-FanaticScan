@@ -1,6 +1,7 @@
 // OBD-II services (SAE J1979) on top of ISO 9141-2: supported PIDs, live data, stored / pending DTCs, clear.
 
-import { Iso9141, IsoMessage } from './iso9141';
+import type { ObdTransport } from './elm327';
+import type { IsoMessage } from './iso9141';
 import { describePcode } from './pcodes';
 
 export interface PidDef {
@@ -66,7 +67,7 @@ const ofService = (msgs: IsoMessage[], sid: number) => msgs.filter((m) => m.data
 
 export class Obd2 {
   supported = new Set<number>();
-  constructor(readonly iso: Iso9141) {}
+  constructor(readonly iso: ObdTransport) {}
 
   /** Reads the supported PID bitmaps (01 00, 01 20, 01 40). */
   async readSupported(): Promise<Set<number>> {

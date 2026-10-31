@@ -37,6 +37,10 @@ import logoSvg from './assets/e46fanatics.svg?raw';
 import './nativeApp'; // Android app: USB bridge and file saving (no effect in a browser)
 import { WebSerialChannel, watchCable, webSerialAvailable } from './WebSerialChannel';
 import { WebUsbFtdiChannel, watchUsbCable, webUsbAvailable } from './WebUsbFtdiChannel';
+import { BleElmChannel, bleAvailable } from './BleElmChannel';
+import { BtClassicChannel, btClassicAvailable, pairedAdapters, type PairedDevice } from './BtClassicChannel';
+import { Elm327 } from '../core/native/elm327';
+import { SimElmChannel } from '../core/sim/elmSim';
 
 /** Desktop Chrome/Edge: Web Serial (the OS drives the FTDI chip). Chrome on Android: WebUSB with our own FTDI driver. */
 const cableApi = (): 'serial' | 'usb' | null => (webSerialAvailable() ? 'serial' : webUsbAvailable() ? 'usb' : null);
@@ -73,6 +77,8 @@ const S = {
   offline: '' as '' | 'garage' | 'library',
   channel: null as ByteChannel | null,
   mode: null as 'cable' | 'sim' | 'remote' | null,
+  /** connected through an ELM327 adapter: engine OBD-II only */
+  elm: false,
   /** helper side: the car of someone else, read through a remote session */
   remote: null as RemoteSession | null,
   remoteAccess: '' as '' | 'read' | 'tests',
@@ -228,6 +234,76 @@ async function connect(mode: 'cable' | 'sim') {
   }
 }
 
+const ELM_LINE = { baudRate: 38400, dataBits: 8, parity: 'none', stopBits: 1 } as const;
+
+/** Lets the user pick one of the Bluetooth devices paired in Android's settings. */
+function pickPaired(list: PairedDevice[]): Promise<PairedDevice | null> {
+  return new Promise((resolve) => {
+    let chosen: PairedDevice | null = null;
+    const d = h('dialog', { class: 'report-dlg' },
+      h('h2', {}, 'Choose the adapter'),
+      list.length
+        ? h('p', {}, 'Bluetooth devices paired with this phone. The adapter is usually called OBDII, OBD2, V-LINK or similar.')
+        : h('p', {}, 'No paired Bluetooth device. Plug the adapter into the car, pair it in Android\'s Bluetooth settings (the PIN is usually 1234 or 0000), then come back.'),
+      ...list.map((x) => h('button', { class: 'btn', style: 'display:block;width:100%;margin:6px 0;text-align:left', onclick: () => { chosen = x; d.close(); } }, h('b', {}, x.name), h('small', { style: 'margin-left:8px;opacity:.7' }, x.address))),
+      h('div', { class: 'row' }, h('button', { class: 'btn', onclick: () => d.close() }, 'Cancel')),
+    ) as HTMLDialogElement;
+    document.body.append(d);
+    d.addEventListener('close', () => { d.remove(); resolve(chosen); });
+    d.showModal();
+  });
+}
+
+/** ELM327 adapter (Bluetooth LE, classic Bluetooth in the app, USB or paired serial port on a computer, or simulated). */
+async function connectElm(kind: 'ble' | 'classic' | 'serial' | 'sim') {
+  S.connError = '';
+  try {
+    let ch: ByteChannel;
+    if (kind === 'sim') {
+      ch = new SimElmChannel(createE46({ drive: (simDrive = new DriveCycle(0)) }));
+      await ch.open(ELM_LINE);
+    } else if (kind === 'ble') ch = await BleElmChannel.request();
+    else if (kind === 'classic') {
+      const dev = await pickPaired(await pairedAdapters());
+      if (!dev) return;
+      S.connError = '';
+      log('info', `Connecting to ${dev.name}…`);
+      ch = await BtClassicChannel.connect(dev);
+    } else {
+      ch = await WebSerialChannel.request();
+      await ch.open(ELM_LINE);
+    }
+    const traffic = (d: 'tx' | 'rx' | 'info', b: Uint8Array | string) => log(d, `${d === 'tx' ? '→' : d === 'rx' ? '←' : '·'} ${typeof b === 'string' ? b : toHex(b)}`);
+    const onLink = (st: 'answer' | 'noanswer' | 'nocable') => {
+      if (st === 'answer') link.lastAnswer = Date.now();
+      else if (st === 'noanswer') link.lastNoAnswer = Date.now();
+      updatePills();
+    };
+    const elm = new Elm327(ch, { onTraffic: traffic, onLink, bauds: kind === 'serial' ? [38400, 9600, 115200, 57600] : undefined });
+    (ch as unknown as { onState: ((s: string) => void) | null }).onState = (st) => {
+      log(st === 'connected' ? 'info' : 'tx', st === 'unplugged' ? 'Adapter disconnected' : st === 'connected' ? 'Adapter connected again' : 'Reconnecting adapter…');
+      link.lastAnswer = 0;
+      updatePills();
+      renderMain();
+    };
+    S.channel = ch;
+    S.iface = null;
+    S.hint = '';
+    S.mode = kind === 'sim' ? 'sim' : 'cable';
+    S.elm = true;
+    link.lastAnswer = link.lastNoAnswer = 0;
+    const onJob = (r: JobResponse, ms: number) => log('job', `${r.sgbd}.${r.job} — ${r.error ? r.error.text : jobStatus(r.resultSets) || 'OK'} (${ms} ms)`);
+    S.session = new NativeSession({ channel: ch, elm, onJob, onTraffic: traffic, onLink });
+    log('info', `Connected: ${ch.name} · ELM327 mode (engine OBD-II only)`);
+    render();
+    scan();
+  } catch (e) {
+    const m = (e as Error).message ?? String(e);
+    if (!/No port selected|No device selected|cancel|User cancelled|chooser/i.test(m)) S.connError = `Could not connect the ELM327 adapter: ${m}`;
+    render();
+  }
+}
+
 async function disconnect() {
   S.share?.stop();
   S.share = null;
@@ -253,6 +329,7 @@ async function disconnect() {
   S.channel = null;
   S.iface = null;
   S.mode = null;
+  S.elm = false;
   S.mods.clear();
   S.selected = null;
   S.page = 'overview';
@@ -790,10 +867,10 @@ function carTitle() {
   const motor = String(dme?.ident.ID_MOTOR ?? '').split('_')[0];
   return motor ? `BMW E46 · ${motor}` : 'BMW E46';
 }
-const variantLabel = (v: string) => (v === 'native:12' ? 'OBD-II + DS2' : v.startsWith('native:') ? 'DS2' : v.toUpperCase());
+const variantLabel = (v: string) => (v === 'native:12' ? (S.elm ? 'OBD-II (ELM327)' : 'OBD-II + DS2') : v.startsWith('native:') ? 'DS2' : v.toUpperCase());
 function carSummary() {
   const parts = ['d_0012', 'd_0032', 'd_0056'].map((g) => S.mods.get(g)?.scan?.variant).filter((v): v is string => !!v).map(variantLabel);
-  if (S.session?.kind === 'native') return 'Plug & play · OBD-II + DS2';
+  if (S.session?.kind === 'native') return S.elm ? 'ELM327 · engine OBD-II only' : 'Plug & play · OBD-II + DS2';
   return [...new Set(parts)].join(' · ');
 }
 
@@ -924,6 +1001,16 @@ function renderSetup() {
         h('button', { class: 'btn primary', disabled: !hasSerial, onclick: () => connect('cable') }, 'Connect cable'),
       ),
       h('div', { class: 'start-card' },
+        h('h2', {}, 'ELM327 adapter'),
+        h('p', {}, 'Engine only: standard OBD-II fault codes, clearing and live data. An ELM327 cannot reach the gearbox, ABS, airbag, cluster and the other E46 modules; those need the K+DCAN cable.'),
+        h('div', { class: 'row' },
+          btClassicAvailable() ? h('button', { class: 'btn', onclick: () => connectElm('classic'), title: 'Most ELM327 v1.5 adapters: pair it in Android\'s Bluetooth settings first' }, 'Bluetooth (paired)') : null,
+          bleAvailable() ? h('button', { class: 'btn', onclick: () => connectElm('ble'), title: 'Bluetooth LE adapters (Vgate iCar BLE, vLinker, iOS-compatible ELM327)' }, 'Bluetooth LE') : null,
+          webSerialAvailable() ? h('button', { class: 'btn', onclick: () => connectElm('serial'), title: 'USB ELM327, or a classic Bluetooth adapter paired with this computer (it shows up as a serial port)' }, 'USB / serial port') : null,
+          h('button', { class: 'btn ghost', onclick: () => connectElm('sim'), title: 'A simulated ELM327 on the simulated 325i' }, 'Simulated ELM327'),
+        ),
+      ),
+      h('div', { class: 'start-card' },
         h('h2', {}, 'Simulator'),
         h('p', {}, 'A simulated 325i on a 6½-minute trip that repeats: key on, cold start, warm-up at idle, city traffic, motorway and a run to top speed, warm idle, engine off.'),
         h('button', { class: 'btn', onclick: () => connect('sim') }, 'Start simulator'),
@@ -1022,14 +1109,14 @@ function renderChips() {
         h('span', { class: `led ${s.cls}` }), h('b', {}, m.short), h('small', {}, s.text || m.name));
     }),
     S.scanning ? h('span', { class: 'chip ghost' }, h('span', { class: 'led busy' }), h('b', {}, 'Scanning…')) : null,
-    !S.scanning ? h('button', { class: 'chip ghost', onclick: scan, title: missing ? `${missing} modules did not respond: not fitted to this car, or (if only engine and transmission answer) the cable switch is not joining OBD pins 7 and 8` : '' }, h('b', {}, 'Rescan'), missing ? h('small', {}, `${missing} not responding`) : null) : null,
+    !S.scanning ? h('button', { class: 'chip ghost', onclick: scan, title: S.elm ? 'An ELM327 adapter reaches only the engine (OBD-II); the other modules need the K+DCAN cable' : missing ? `${missing} modules did not respond: not fitted to this car, or (if only engine and transmission answer) the cable switch is not joining OBD pins 7 and 8` : '' }, h('b', {}, 'Rescan'), missing && !S.elm ? h('small', {}, `${missing} not responding`) : null) : null,
   );
 }
 
 function renderMain() {
   const main = document.querySelector('main');
   if (!main) return;
-  const banner = renderHint() ?? renderRemoteBanner();
+  const banner = renderHint() ?? renderRemoteBanner() ?? renderElmBanner();
   const put = (xs: (Node | null)[]) => main.replaceChildren(...nodes([banner, ...xs]));
   if (S.page === 'overview') return put(renderOverview());
   if (S.page === 'service') return put(renderService(ctx));
@@ -1043,7 +1130,7 @@ function renderMain() {
   if (!S.selected || !modState(S.selected).scan?.variant) S.selected = foundModules()[0]?.group ?? null;
   if (!S.selected) {
     return main.replaceChildren(renderChips(),
-      h('div', { class: 'empty' }, h('strong', {}, S.scanning ? 'Looking for modules…' : 'No module responded'), S.scanning ? 'This takes a few seconds.' : 'Check the ignition is in position 2 and the cable is in K-line mode with OBD pins 7 and 8 joined, then press Rescan.'));
+      h('div', { class: 'empty' }, h('strong', {}, S.scanning ? 'Looking for modules…' : 'No module responded'), S.scanning ? 'This takes a few seconds.' : S.elm ? 'The engine did not answer the ELM327. Check the ignition is in position 2, then press Rescan. See the Log page for what the adapter said.' : 'Check the ignition is in position 2 and the cable is in K-line mode with OBD pins 7 and 8 joined, then press Rescan.'));
   }
   const m = moduleDef(S.selected);
   const st = modState(m.group);
@@ -1431,6 +1518,12 @@ const ctx: PageCtx = {
 };
 
 /** Top of every screen while a remote session runs (owner: who is reading; helper: whose car this is). */
+function renderElmBanner() {
+  if (!S.elm || !S.session) return null;
+  return h('div', { class: 'msg info' }, h('b', {}, 'ELM327 adapter: engine only. '),
+    'Standard OBD-II fault codes, clearing and live data of the engine. The ELM327 cannot talk to the gearbox, ABS, airbag, cluster and the other modules of an E46 (they use BMW\'s DS2 protocol): for those, use a K+DCAN cable.');
+}
+
 function renderRemoteBanner() {
   if (S.share)
     return h('div', { class: 'msg info rm-banner' }, h('span', { class: 'led live' }),

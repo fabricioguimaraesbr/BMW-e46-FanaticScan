@@ -51,6 +51,16 @@ Quem vai usar o programa (Windows ou Mac, inclusive M1) **não precisa instalar 
 
 O Safari e o Firefox não têm Web Serial; neles só o simulador funciona.
 
+### ELM327 (só o motor)
+
+Adaptadores ELM327 (Bluetooth, Bluetooth LE, USB) só falam OBD-II: no E46 leem os erros P do motor (com descrição), apagam e mostram os dados em tempo real do motor. Não falam DS2, então câmbio, ABS, airbag, painel e os outros módulos ficam de fora (para eles, cabo K+DCAN). Na tela inicial, cartão **ELM327 adapter**:
+- **Bluetooth (paired)**: só no app Android; o adaptador é pareado antes nas configurações de Bluetooth do Android (a maioria dos ELM327 v1.5 baratos é Bluetooth clássico).
+- **Bluetooth LE**: Chrome (computador e Android) e app Android; adaptadores BLE (Vgate iCar BLE, vLinker, os "compatíveis com iPhone").
+- **USB / serial port**: Chrome/Edge no computador; ELM327 USB ou Bluetooth clássico pareado com o computador (aparece como porta serial). O programa tenta 38400, 9600, 115200 e 57600 baud.
+- **Simulated ELM327**: simulador.
+
+Código: `src/core/native/elm327.ts` (comandos AT, mesma interface do ISO 9141 para o `Obd2`), `src/web/BleElmChannel.ts`, `src/web/BtClassicChannel.ts` + `android/.../BtSerialPlugin.java`, simulador `src/core/sim/elmSim.ts`.
+
 ### Android (celular)
 
 O Chrome do Android não tem Web Serial, mas tem WebUSB. Nele o programa usa um driver próprio do chip FTDI (`src/web/WebUsbFtdiChannel.ts`, protocolo dos drivers abertos libftdi/ftdi_sio): o mesmo cabo K+DCAN ou do BMW Scanner, ligado ao celular por um adaptador OTG (USB-A fêmea → USB-C). A página precisa abrir por HTTPS (ou do disco). Como no celular não há atalho para juntar a pasta `modulos`, a tela inicial tem **Choose module files**: o usuário escolhe os próprios `.prg`/`.grp` uma vez e eles ficam só naquele navegador (IndexedDB). Sem arquivos, funciona em plug & play. iPhone e iPad não aceitam cabos USB-serial: lá só com adaptador sem fio e app nativo.
