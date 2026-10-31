@@ -1,0 +1,58 @@
+# Builds the Android app (E46Fanatics Scan.apk) and publishes it in the release "android-latest".
+# No BMW module files go into the APK: on the phone the user picks their own files once.
+name: Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-apk
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            npm ci && npx tsc -p . && npx vitest run && npx vite build && npx cap sync android &&
+            (cd android && chmod +x gradlew && ./gradlew assembleRelease --no-daemon --stacktrace)
+          } 2>&1 | tee build.log
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V=$(node -p "require('./package.json').version")
+          APK="E46Fanatics-Scan-$V.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "$APK"
+          gh release delete android-build-log --yes --cleanup-tag || true
+          gh release delete android-latest --yes --cleanup-tag || true
+          gh release create android-latest "$APK" --title "Android app $V" --prerelease \
+            --notes "Built from ${GITHUB_SHA::7}. Install on Android 7 or newer; the cable goes in through a USB OTG adapter."
+      # the Actions API is not always reachable from where the app is developed: keep the log of a failed build as a release asset
+      - name: Publish build log on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete android-build-log --yes --cleanup-tag || true
+          tail -c 900000 build.log > build-log.txt || echo "no log" > build-log.txt
+          gh release create android-build-log build-log.txt --title "Android build failed" --prerelease --notes "Build of ${GITHUB_SHA::7} failed; see build-log.txt."

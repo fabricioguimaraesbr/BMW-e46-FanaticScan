@@ -34,6 +34,7 @@ import { liquidBackdrop } from './backdrop';
 import { drawChart } from './chart';
 import { formatNumber } from './gauge';
 import logoSvg from './assets/e46fanatics.svg?raw';
+import './nativeApp'; // Android app: USB bridge and file saving (no effect in a browser)
 import { WebSerialChannel, watchCable, webSerialAvailable } from './WebSerialChannel';
 import { WebUsbFtdiChannel, watchUsbCable, webUsbAvailable } from './WebUsbFtdiChannel';
 
@@ -221,7 +222,7 @@ async function connect(mode: 'cable' | 'sim') {
     const m = (e as Error).message ?? String(e);
     if (!/No port selected|No device selected|cancel/i.test(m))
       S.connError = cableApi() === 'usb'
-        ? `Could not open the cable: ${m}. Unplug the cable and plug it in again, and allow Chrome to use it when Android asks.`
+        ? `Could not open the cable: ${m}. Unplug the cable and plug it in again, and allow access when Android asks.`
         : `Could not open the cable: ${m}. Close INPA or BMW Scanner if they are using the port.`;
     render();
   }
@@ -915,7 +916,7 @@ function renderSetup() {
       h('div', { class: 'start-card' },
         h('h2', {}, 'Connect to the car'),
         h('p', {}, 'Plug the cable into the OBD port and turn the key to position 2. On a K+DCAN cable, use K-line mode with OBD pins 7 and 8 joined (the switch position that does it depends on the cable).'),
-        api === 'usb' ? h('p', { class: 'start-note' }, 'Phone: plug the cable in with a USB OTG adapter (USB-A female to USB-C or micro-USB) and allow Chrome to use it.') : null,
+        api === 'usb' ? h('p', { class: 'start-note' }, 'Phone: plug the cable in with a USB OTG adapter (USB-A female to USB-C or micro-USB) and allow access when Android asks.') : null,
         api === 'usb' ? phoneModuleFiles() : files.count ? null : h('p', { class: 'start-note' }, 'No module files in the modulos folder: plug & play mode (engine over OBD-II, every module identified).'),
         S.connError ? h('div', { class: 'msg err' }, S.connError) : null,
         !hasSerial ? h('div', { class: 'msg warn' }, 'This browser cannot access USB ports. Use Chrome or Edge on Mac or Windows, or Chrome on Android, to connect the cable. iPhone and iPad cannot use USB cables. The simulator works in any browser.') : null,

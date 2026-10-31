@@ -1,0 +1,6 @@
+{
+  "appId": "com.e46fanatics.scan",
+  "appName": "E46Fanatics Scan",
+  "webDir": "dist",
+  "android": { "allowMixedContent": false }
+}

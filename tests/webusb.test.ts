@@ -126,3 +126,48 @@ describe('WebUSB FTDI channel with the simulated E46', () => {
     channel.dispose();
   }, 40000);
 });
+
+describe('Android app: native USB bridge shim', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('runs the same FTDI driver over the plugin (status bytes stripped natively)', async () => {
+    const { createUsbShim } = await import('../src/web/nativeApp');
+    // fake plugin: a FakeFtdi underneath, read by a "native thread" that strips the status bytes
+    const chip = new FakeFtdi(new SimChannel(createE46({})));
+    const listeners: Record<string, ((e: never) => void)[]> = {};
+    let reading = false;
+    const bridge = {
+      list: async () => ({ devices: [{ deviceId: 7, vendorId: 0x0403, productId: 0x6001, hasPermission: false }] }),
+      requestPermission: async () => ({ granted: true }),
+      open: async () => {
+        await chip.open();
+        reading = true;
+        void (async () => {
+          while (reading) {
+            const r = await chip.transferIn(1, 512);
+            const raw = new Uint8Array(r.data.buffer);
+            const data = stripStatus(raw, 64);
+            if (data.length) for (const cb of listeners.data ?? []) cb({ data: Buffer.from(data).toString('base64') } as never);
+          }
+        })();
+        return { packetSize: 64 };
+      },
+      control: async (o: { request: number; value: number; index: number }) => void (await chip.controlTransferOut(o)),
+      write: async (o: { data: string }) => void (await chip.transferOut(2, new Uint8Array(Buffer.from(o.data, 'base64')))),
+      close: async () => { reading = false; await chip.close(); },
+      addListener: async (ev: string, cb: (e: never) => void) => {
+        (listeners[ev] ??= []).push(cb);
+        return { remove: async () => { listeners[ev] = listeners[ev].filter((x) => x !== cb); } };
+      },
+    };
+    vi.stubGlobal('navigator', { usb: createUsbShim(bridge as never) });
+    const channel = await WebUsbFtdiChannel.request();
+    const iface = new ObdInterface(channel);
+    await iface.connect();
+    const s = new NativeSession({ channel, iface });
+    const found = (await s.scan()).filter((e) => e.variant).map((e) => e.module.short);
+    expect(found).toEqual(['DME', 'EGS', 'ABS', 'IKE']);
+    await channel.close();
+    channel.dispose();
+  }, 40000);
+});

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">E46Fanatics Scan</string>
+    <string name="title_activity_main">E46Fanatics Scan</string>
+    <string name="package_name">com.e46fanatics.scan</string>
+    <string name="custom_url_scheme">com.e46fanatics.scan</string>
+</resources>
