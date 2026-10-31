@@ -2,7 +2,7 @@ import '@fontsource/titillium-web/400.css';
 import '@fontsource/titillium-web/600.css';
 import '@fontsource/titillium-web/700.css';
 import '@fontsource/jetbrains-mono/400.css';
-import { Availability, BLOCKED_CODE, DiagSession, Dtc, Session, JobListEntry, ScanEntry, Value, isLiveGroup, jobStatus } from '../core/api/DiagSession';
+import { Availability, BLOCKED_CODE, DISTURBED, DiagSession, Dtc, Session, JobListEntry, ScanEntry, Value, isLiveGroup, jobStatus } from '../core/api/DiagSession';
 import { HybridSession } from '../core/api/HybridSession';
 import { EQUIPMENT_LABEL, EquipmentKey, isHiddenByEquipment } from '../core/api/equipment';
 import { SAFETY_LABEL } from '../core/api/safety';
@@ -518,6 +518,9 @@ async function runJob(variant: string, job: JobListEntry, args: string) {
 // ------------------------------------------------------------------ live data
 const COLORS = ['#ffa033', '#4290f6', '#41d38a', '#e9ecef'];
 const LIVE_RERENDER_MS = 1200;
+/** Live data gives up only after this many failed reads in a row, lasting at least this long. */
+const LIVE_MAX_MISSES = 8;
+const LIVE_MAX_MISS_MS = 10_000;
 let liveBuiltAt = 0;
 
 function resetLive() {
@@ -579,6 +582,8 @@ async function startLive(group: string) {
   let next = 0;
   let n = 0;
   let t0 = Date.now();
+  let misses = 0;
+  let missSince = 0;
   const alive = () => S.live.running && S.selected === group && S.page === 'live' && S.session === session;
   while (alive()) {
     const r = await session.readValues(variant, main);
@@ -591,8 +596,23 @@ async function startLive(group: string) {
       continue;
     }
     if (r.error) {
-      S.live.error = `Reading stopped: ${r.error}`;
-      break;
+      // a disturbed line or a missed answer: keep trying for a while before giving up
+      misses++;
+      if (!missSince) missSince = Date.now();
+      log('info', `Live data: read failed (${misses} in a row): ${r.error}`);
+      if (misses >= LIVE_MAX_MISSES && Date.now() - missSince > LIVE_MAX_MISS_MS) {
+        S.live.error = `Reading stopped: ${r.error}. The connection to the car dropped ${misses} times in a row. Check the cable switch position, that the plug sits firmly in the OBD socket, and use a USB port without a hub. Then press Resume.`;
+        break;
+      }
+      document.querySelector('#live-msg')?.replaceChildren(h('div', { class: 'msg warn' }, `Unstable connection to the car (${r.error}). Retrying… (${misses})`));
+      await new Promise((res) => setTimeout(res, Math.min(250 * misses, 1500)));
+      continue;
+    }
+    if (misses) {
+      log('info', `Live data: reading again after ${misses} failed read(s)`);
+      misses = 0;
+      missSince = 0;
+      document.querySelector('#live-msg')?.replaceChildren();
     }
     mergeValues(main, r.values, st.avail?.equipment);
     // the other groups: all of them every cycle when there are few, otherwise one per cycle in turn
@@ -607,7 +627,8 @@ async function startLive(group: string) {
     for (const job of todo) {
       const r2 = await session.readValues(variant, job);
       if (!alive()) break;
-      if (r2.error || !r2.values.length) { if (cableOk()) failed.add(job); continue; }
+      // a disturbed line is a hiccup: only a real "not supported" answer drops the group for this session
+      if (r2.error || !r2.values.length) { if (cableOk() && !(r2.error && DISTURBED.test(r2.error))) failed.add(job); continue; }
       mergeValues(job, r2.values, st.avail?.equipment);
     }
     S.live.pass.done = rest.length <= 3 ? rest.length : Math.min(rest.length, next);

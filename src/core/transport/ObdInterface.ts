@@ -54,6 +54,12 @@ const NEGATIVE = 0x7f;
 const PENDING = 0x78;
 /** A started answer always gets at least this long to complete (a long fault memory at 9600 baud). */
 const FRAME_COMPLETE_MIN_MS = 1500;
+/** Extra sends allowed when a transfer was disturbed (echo lost or answer cut off). */
+const GARBLED_EXTRA_TRIES = 2;
+/** Silence on the line before a disturbed telegram is sent again. */
+const QUIET_MS = 60;
+/** A late echo (USB scheduling on Windows, a busy laptop) still counts if it arrives within this time. */
+const LATE_ECHO_MS = 250;
 
 export class ObdInterface implements EdInterface {
   readonly interfaceType = 'OBD';
@@ -208,8 +214,11 @@ export class ObdInterface implements EdInterface {
     let lastError: number = ErrorCodes.IFH_0009;
     // BMW-FAST probes of a K-line module are sent once: the SGBD falls back to KWP2000* itself
     const repeats = concept === CONCEPT_BMW_FAST ? 0 : this.commRepeats;
+    // a disturbed transfer (lost echo, cut answer) is a line hiccup, not a missing module: it gets extra tries
+    let garbledTries = concept === CONCEPT_BMW_FAST ? 0 : GARBLED_EXTRA_TRIES;
     for (let attempt = 0; attempt <= repeats; attempt++) {
       if (this.cancelled) return this.fail(ErrorCodes.API_0001);
+      if (attempt > 0 && (lastError === ErrorCodes.IFH_0003 || lastError === ErrorCodes.IFH_0010)) await this.waitQuiet();
       let r: Uint8Array | number;
       try {
         r = await this.transaction(request);
@@ -223,12 +232,31 @@ export class ObdInterface implements EdInterface {
         return r;
       }
       lastError = r;
-      if (r === ErrorCodes.IFH_0003 || r === ErrorCodes.IFH_0010) this.noteGarbled();
+      if (r === ErrorCodes.IFH_0003 || r === ErrorCodes.IFH_0010) {
+        this.noteGarbled();
+        this.traffic('info', `${r === ErrorCodes.IFH_0003 ? 'Echo lost' : 'Answer cut off'} (attempt ${attempt + 1}): the line was disturbed, sending again`);
+        if (attempt === repeats && garbledTries > 0) {
+          garbledTries--;
+          attempt--; // one more try without using up the SGBD's repeats
+        }
+      }
       if (r === ErrorCodes.IFH_0018 || !this.channel.isOpen) break;
     }
     if (concept === CONCEPT_BMW_FAST && lastError === ErrorCodes.IFH_0009) this.fastSilent.add(target);
     this.opts.onLink?.(lastError === ErrorCodes.IFH_0018 || !this.channel.isOpen ? 'nocable' : 'noanswer');
     return this.fail(lastError);
+  }
+
+  /** After a disturbed transfer: let late bytes (an echo or answer that came too late) arrive, then drop them. */
+  private async waitQuiet() {
+    const quiet = Math.max(this.timing.regen, QUIET_MS);
+    for (let i = 0; i < 20; i++) {
+      const late = await this.channel.read(256, quiet);
+      if (!late.length) break;
+      this.traffic('info', `Dropped ${late.length} late byte(s) before sending again`);
+    }
+    this.channel.discardInput();
+    this.lastRx = Date.now();
   }
 
   private noteGarbled() {
@@ -303,7 +331,12 @@ export class ObdInterface implements EdInterface {
     // --- echo (single-wire K-line: every byte sent comes back)
     let pending: Uint8Array = new Uint8Array(0);
     if (this.echoDetected !== false) {
-      const echo = await this.channel.read(tx.length, telEnd + tx.length * 2);
+      let echo = await this.channel.read(tx.length, telEnd + tx.length * 2);
+      if (echo.length === 0 && this.echoDetected) {
+        // the echo is late, not lost: the USB driver or the computer held the bytes back
+        echo = await this.channel.read(tx.length, LATE_ECHO_MS);
+        if (echo.length) this.traffic('info', 'Late echo');
+      }
       if (equal(echo, tx)) {
         this.echoDetected = true;
       } else if (echo.length === 0 && this.echoDetected) {

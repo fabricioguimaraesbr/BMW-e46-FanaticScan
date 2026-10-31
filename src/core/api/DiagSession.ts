@@ -10,6 +10,10 @@ import { JobSafety, SafetyMode, classifyJob, isAllowed } from './safety';
 import { Equipment, equipmentFromDme, isHiddenByEquipment } from './equipment';
 import { E46_MODULES, ModuleDef, UNIT_LABELS, VALUE_LABELS } from './modules';
 
+/** The line was disturbed (lost echo, cut answer): a hiccup, not an answer from the module. */
+export const DISTURBED = /IFH-0003|IFH-0010/;
+const SCAN_RETRIES = 2;
+
 export interface ScanEntry {
   module: ModuleDef;
   variant: string | null; // resolved SGBD, null = not answering
@@ -151,7 +155,12 @@ export class DiagSession implements Session {
   async scan(modules = E46_MODULES, onEntry?: (e: ScanEntry) => void): Promise<ScanEntry[]> {
     const out: ScanEntry[] = [];
     for (const m of modules) {
-      const r = await this.run(m.group, 'IDENT');
+      let r = await this.run(m.group, 'IDENT');
+      // a disturbed line during the scan is not a missing module: ask again (seen on Windows, issue of 31/10/2026)
+      for (let i = 0; i < SCAN_RETRIES && r.error && DISTURBED.test(r.error.text); i++) {
+        await new Promise((res) => setTimeout(res, 300));
+        r = await this.run(m.group, 'IDENT');
+      }
       const answered = !r.error || !/IFH-0009|IFH-0010|No variant/i.test(r.error.text);
       const e: ScanEntry = {
         module: m,

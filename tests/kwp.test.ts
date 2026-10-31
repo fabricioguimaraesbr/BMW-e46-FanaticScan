@@ -128,6 +128,50 @@ describe('KWP2000* and BMW-FAST framing', () => {
   });
 });
 
+describe('unstable line (report of 31/10/2026: IFH-0003 in live data on Windows)', () => {
+  const REQ = new Uint8Array([0xb8, 0x12, 0xf1, 0x02, 0x1a, 0x80]);
+  type Raw = { onData(b: Uint8Array): void };
+
+  it('accepts an echo that arrives late', async () => {
+    const { i, ch } = await iface([testEcu(0x12, 'kwp2000s')]);
+    await i.setCommParameter(KWP);
+    expect(await i.transmitData(REQ)).not.toBeNull(); // echo learned
+    // a slow USB driver: everything the cable receives reaches the app 90 ms later
+    const raw = ch as unknown as Raw;
+    const onData = raw.onData.bind(ch);
+    raw.onData = (b) => void setTimeout(() => onData(b), 90);
+    const rx = await i.transmitData(REQ);
+    raw.onData = onData;
+    expect(rx?.[4]).toBe(0x5a);
+  });
+
+  it('sends again when the echo is lost, even with no SGBD repeats left', async () => {
+    const { i, ch, errors } = await iface([testEcu(0x12, 'kwp2000s')]);
+    await i.setCommParameter(KWP);
+    expect(await i.transmitData(REQ)).not.toBeNull(); // echo learned
+    i.commRepeats = 0;
+    const write = ch.write.bind(ch);
+    let lost = 2; // the first two telegrams never reach the line
+    ch.write = async (d) => {
+      if (lost-- > 0) return;
+      return write(d);
+    };
+    const rx = await i.transmitData(REQ);
+    expect(rx?.[4]).toBe(0x5a);
+    expect(errors).toEqual([]);
+  });
+
+  it('still fails when the line stays dead', async () => {
+    const { i, ch, errors } = await iface([testEcu(0x12, 'kwp2000s')]);
+    await i.setCommParameter(KWP);
+    expect(await i.transmitData(REQ)).not.toBeNull();
+    i.commRepeats = 0;
+    ch.write = async () => undefined;
+    expect(await i.transmitData(REQ)).toBeNull();
+    expect(errors.length).toBe(1);
+  });
+});
+
 describe('write protection by job description', () => {
   it('EWS transponder "self test" is a write, the cluster self test is not', () => {
     expect(classifyJob('STEUERN_SELBSTTEST', 'ews3')).toBe('write');
