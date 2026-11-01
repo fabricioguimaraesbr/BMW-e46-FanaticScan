@@ -136,6 +136,15 @@ Funções desconhecidas são tratadas como escrita (bloqueadas). Além do nome, 
 
 O ponteiro do E46 fica parado no meio de 75 a 115 °C. A tela **Coding** lê o EEPROM do painel (512 bytes no KOMBI46, até ~2002; 2 KB no KOMBI46R, 2003+), salva o backup (`e46-kombi46-eeprom-AAAA-MM-DD-HHMM.bin`), encontra a curva (byte 0x0F0 no layout antigo: pares temperatura/ângulo; perto de 0x34D no novo: só temperaturas) e oferece as curvas do guia do E46Fanatics (fábrica, Revisão #1 90–100 °C, Revisão #2 sem buffer; no layout novo também a curva do M3) ou pontos próprios, com gráfico, ponteiro de prévia, temperatura atual do motor e comparação dos bytes. Depois de gravar, "Restart cluster" reinicia o painel (ou desligar e ligar a ignição).
 
+## Termostática da DME (Engine cooling, v1.7)
+
+O M52TU e o M54 têm termostato elétrico: a DME escolhe a temperatura do líquido por mapas (de fábrica ~102 °C em carga parcial e 87 °C em carga alta). A tela **Engine cooling** (menu Workshop, ou o cartão na tela inicial, sem carro) mostra esses mapas (A/C ligado e desligado), as condições que os liberam, os alvos de proteção, o controle da termostática e a ventoinha:
+
+- **Ler a DME pelo cabo** (`src/core/dme/reader.ts`): só leitura, pelo serviço de memória do DS2 (`12 09 06 00 HH MM LL NN`, o mesmo do job SPEICHER_LIN_LESEN da MS430DS0). Lê a calibração (MS43 64 KB, MS42 32 KB) e os poucos bytes do programa que descrevem os checksums, em ~2 min; opcionalmente o programa inteiro (~15 min). O setor de boot (dados do imobilizador) nunca é lido. A leitura só é aceita se passar no CRC da própria DME, e é salva como backup.
+- **Ou abrir um `.bin`** (leitura completa de 512 KB ou só a calibração, como as do MS4x Flasher).
+- A versão (MS43 430037/0055/0056/0064/0066/0069, MS42 0110C6) escolhe a definição do ms4x-net; a definição é conferida contra o conteúdo antes de mostrar qualquer valor.
+- Edição dos mapas e condições com limites próprios do app, presets (100 °C / 95 °C) e um `.bin` novo com os checksums refeitos. **Gravar na DME ainda não faz parte do app.**
+
 ## Sessão remota
 
 Botão **Remote session** no topo. Quem está no carro clica em "Share my car", escolhe o acesso e recebe um **código de convite**; o colega cola em "Connect to a car" e devolve um **código de resposta**. A ligação é direta entre os navegadores (WebRTC, `src/web/remote.ts`); não há servidor do projeto, só servidores STUN públicos para descobrir o endereço de cada um. O colega usa o programa normalmente (falhas, live data, logger, relatório); cada leitura roda no computador do carro (`src/core/remote/remote.ts`). Redes que bloqueiam ligação direta (algumas redes móveis/corporativas) podem impedir a conexão.

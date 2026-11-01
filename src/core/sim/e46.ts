@@ -4,6 +4,7 @@
 import type { SimEcu } from './SimChannel';
 import { DriveCycle } from './drive';
 import { Ms45, Mrs5 } from './kwp';
+import { makeSimMs43Flash } from './ms43Flash';
 
 const ascii = (s: string) => [...s].map((c) => c.charCodeAt(0));
 
@@ -99,6 +100,8 @@ class Gs8604 extends DtcEcu {
 
 /** MS43 with a simple engine model (idle → rev → cruise cycle) for live data. */
 class Ms43 extends DtcEcu {
+  /** flash image answered to memory reads (06 00); 'locked' refuses them like a read-locked DME */
+  flash: Uint8Array | 'locked' | null = null;
   constructor(readonly drive: DriveCycle) {
     super(
       0x12,
@@ -216,8 +219,21 @@ class Ms43 extends DtcEcu {
       for (const c of [1, 5, 3, 6, 2, 4]) b.push(...u16(count[c]));
       return [0xa0, ...b, ...new Array(15).fill(0)];
     }
-    // user information field (AIF_LESEN): empty, as on many original DMEs
-    if (d[0] === 0x06 && d[1] === 0x00) return [0xa0, ...new Array(d[5] || 0x2e).fill(0)];
+    // memory read 06 00 HH MM LL NN: the flash from 0x10000 (flash mirror at 0x80000; external RAM at 0x40000-0x43FFF)
+    if (d[0] === 0x06 && d[1] === 0x00) {
+      const addr = (d[2] << 16) | (d[3] << 8) | d[4];
+      const n = d[5];
+      const f = addr & 0x7ffff;
+      const ram = !(addr & 0x80000) && f >= 0x40000 && f < 0x44000;
+      if (f >= 0x10000 && !ram && addr < 0x100000) {
+        if (this.flash === 'locked') return [0xa1];
+        if (!n || n > 0x80) return [0xa2];
+        this.flash ??= makeSimMs43Flash();
+        return [0xa0, ...this.flash.subarray(f, Math.min(f + n, 0x80000))];
+      }
+      // user information field (AIF_LESEN) and RAM: empty, as on many original DMEs
+      return [0xa0, ...new Array(n || 0x2e).fill(0)];
+    }
     if (d[0] === 0x0b && d[1] === 0x03) {
       const e = this.engine();
       const b = new Array(41).fill(0);
@@ -311,6 +327,8 @@ export interface SimOptions {
   mrs5?: boolean;
   /** Instrument cluster type (default 'kombi46', like the owner's 2001 car); false: no cluster. */
   cluster?: 'kombi46' | 'kombi46r' | false;
+  /** MS43 flash answered to memory reads (default: a made-up 430069 image); 'locked': refuses to be read. */
+  dmeFlash?: Uint8Array | 'locked';
 }
 
 export function createE46(opts: SimOptions = {}): SimEcu[] {
@@ -319,6 +337,7 @@ export function createE46(opts: SimOptions = {}): SimEcu[] {
   if (opts.engine === 'ms45') dme = new Ms45(drive);
   else {
     const ms43 = new Ms43(drive);
+    if (opts.dmeFlash) ms43.flash = opts.dmeFlash;
     ms43.obdStored = opts.obdStored ?? [];
     ms43.obdPending = opts.obdPending ?? [];
     dme = ms43;

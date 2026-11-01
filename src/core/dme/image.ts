@@ -37,6 +37,12 @@ export interface DmeImageInfo {
   def?: DmeVersionDef;
   /** the calibration header, for display */
   header: string;
+  /**
+   * File ranges [start, end) that hold real data, for an image read from the car in parts (calibration plus the
+   * program's checksum descriptors). Missing means the whole file is real. Checksums over bytes outside these
+   * ranges are not computed.
+   */
+  known?: [number, number][];
 }
 
 export interface ChecksumCheck {
@@ -66,8 +72,13 @@ function versionAt(b: Uint8Array, calStart: number): { family: DmeFamily; versio
   return null;
 }
 
-/** Identifies a DME image (full 512 KB read or calibration read). Throws with a readable reason when it is not one. */
-export function identifyImage(b: Uint8Array): DmeImageInfo {
+const inKnown = (known: [number, number][] | undefined, lo: number, hi: number) => !known || known.some(([a, z]) => lo >= a && hi <= z);
+
+/**
+ * Identifies a DME image (full 512 KB read or calibration read). Throws with a readable reason when it is not one.
+ * `known`: for a 512 KB image read from the car in parts, the file ranges that were read.
+ */
+export function identifyImage(b: Uint8Array, known?: [number, number][]): DmeImageInfo {
   const tries: { family: DmeFamily; kind: ImageKind; calStart: number }[] = [];
   for (const family of ['MS43', 'MS42'] as DmeFamily[]) {
     const l = LAYOUT[family];
@@ -82,7 +93,7 @@ export function identifyImage(b: Uint8Array): DmeImageInfo {
     if (!v || v.family !== t.family) continue;
     const l = LAYOUT[t.family];
     let programVersion: string | undefined;
-    if (t.kind === 'full') {
+    if (t.kind === 'full' && inKnown(known, l.programIdent[0], l.programIdent[1])) {
       const area = ascii(b, l.programIdent[0], l.programIdent[1] - l.programIdent[0]);
       const m = (t.family === 'MS43' ? /4300\d\d/ : /0110[0-9A-F]{2}/).exec(area);
       programVersion = m?.[0];
@@ -96,6 +107,7 @@ export function identifyImage(b: Uint8Array): DmeImageInfo {
       programVersion,
       def: defFor(t.family, v.version),
       header: printable(ascii(b, t.calStart, 0x30)),
+      known: t.kind === 'full' ? known : undefined,
     };
   }
   throw new Error('No MS42/MS43 software version found in the calibration header. The read may be damaged or from another DME.');
@@ -117,7 +129,7 @@ const u32 = (b: Uint8Array, at: number) => (b[at] | (b[at + 1] << 8) | (b[at + 2
 /** Physical address → offset in this file, or -1 when it is not in it. */
 function fileOf(info: DmeImageInfo, phys: number): number {
   const f = info.family === 'MS43' ? phys & 0x7ffff : phys;
-  if (info.kind === 'full') return f < 0x80000 ? f : -1;
+  if (info.kind === 'full') return f < 0x80000 && inKnown(info.known, f, f + 1) ? f : -1;
   const rel = f - LAYOUT[info.family].calStart;
   return rel >= 0 && rel < info.calSize ? rel : -1;
 }
@@ -164,7 +176,7 @@ function crcBlocks(b: Uint8Array, info: DmeImageInfo, d: CrcDesc): [number, numb
   const out: [number, number][] = [];
   for (let i = 0; i < n; i++) {
     const lo = fileOf(info, u32(b, at + 4 + 8 * i)), hi = fileOf(info, u32(b, at + 8 + 8 * i));
-    if (lo < 0 || hi < lo) return null;
+    if (lo < 0 || hi < lo || !inKnown(info.known, lo, hi + 1)) return null;
     out.push([lo, hi]);
   }
   return out;
@@ -192,7 +204,7 @@ function sumRanges(b: Uint8Array, info: DmeImageInfo, s: SumDesc): [number, numb
   const out: [number, number][] = [];
   for (let k = 0; k < 2; k++) {
     const lo = fileOf(info, u32(b, r + 8 * k)), hi = fileOf(info, u32(b, r + 8 * k + 4));
-    if (lo < 0 || hi < lo || (hi - lo) & 1) return null;
+    if (lo < 0 || hi < lo || (hi - lo) & 1 || !inKnown(info.known, lo, hi)) return null;
     out.push([lo, hi]);
   }
   return out;
@@ -232,10 +244,8 @@ export function checkChecksums(b: Uint8Array, info: DmeImageInfo): ChecksumCheck
  */
 export function fixCalibrationChecksums(original: Uint8Array, edited: Uint8Array, info: DmeImageInfo): { image: Uint8Array; fixed: ChecksumCheck[] } {
   if (original.length !== edited.length) throw new Error('The edited image has a different size.');
-  if (info.family === 'MS43' && info.kind !== 'full') {
-    // the calibration 32-bit sum is described in the program part, which a calibration read does not have
-    throw new Error('Changing an MS43 calibration needs a full 512 KB read (the calibration sum is described in the program).');
-  }
+  const why = calibrationEditBlock(original, info);
+  if (why) throw new Error(why);
   const calLo = info.kind === 'full' ? info.calStart : 0;
   const calHi = calLo + info.calSize;
   for (let i = 0; i < edited.length; i++) {
@@ -262,6 +272,18 @@ export function fixCalibrationChecksums(original: Uint8Array, edited: Uint8Array
   const wrong = after.filter((c) => !c.ok && before.some((x) => x.name === c.name));
   if (wrong.length) throw new Error(`Checksum still wrong after fixing: ${wrong.map((c) => c.name).join(', ')}.`);
   return { image: img, fixed: after.filter((c) => c.calibration) };
+}
+
+/**
+ * Why the calibration of this image cannot be changed, or null. The MS43 calibration 32-bit sum is described in
+ * the program part: a calibration-only read lacks it (a read from the car keeps the descriptors it needs).
+ */
+export function calibrationEditBlock(b: Uint8Array, info: DmeImageInfo): string | null {
+  if (info.family !== 'MS43') return null;
+  if (sumOf(b, info, SUMS.MS43[1])) return null;
+  return info.kind === 'calibration'
+    ? 'Changing an MS43 calibration needs a full 512 KB read, or a read made by this app (the calibration sum is described in the program).'
+    : 'The calibration 32-bit sum of this image could not be located.';
 }
 
 /** Versions the app has definitions for, for messages. */

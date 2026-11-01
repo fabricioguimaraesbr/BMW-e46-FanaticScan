@@ -2,7 +2,7 @@
 // of an image in memory; nothing here talks to the car.
 
 import type { DmeAxis, DmeItem, DmeRaw, DmeVersionDef } from './defs';
-import { type ChecksumCheck, type DmeImageInfo, fixCalibrationChecksums } from './image';
+import { type ChecksumCheck, type DmeImageInfo, calibrationEditBlock, fixCalibrationChecksums } from './image';
 
 export interface ItemValues {
   item: DmeItem;
@@ -286,7 +286,8 @@ export interface EditedImage {
  * item, recomputes the calibration checksums and reads everything back. Throws when anything does not add up.
  */
 export function buildEditedImage(original: Uint8Array, info: DmeImageInfo, def: DmeVersionDef, draft: Draft): EditedImage {
-  if (info.family === 'MS43' && info.kind !== 'full') throw new Error('Changing an MS43 calibration needs a full 512 KB read (the calibration sum is described in the program).');
+  const block = calibrationEditBlock(original, info);
+  if (block) throw new Error(block);
   const names = COOLING_GROUPS.flatMap((g) => g.items);
   const fit = checkDefinitionFits(original, info, def, names);
   if (fit.length) throw new Error(`The definition does not fit this read: ${fit[0]}`);

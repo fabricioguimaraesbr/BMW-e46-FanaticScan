@@ -1,13 +1,17 @@
 // Engine cooling screen (DME calibration, MS42 / MS43): opens a DME read file (.bin), finds the software version,
 // applies the matching ms4x-net definition and shows the e-thermostat targets, the conditions around them and the
-// fan stages. The target maps and conditions can be edited into a new file (checksums recomputed). Nothing here talks
-// to the car yet: reading the DME through the cable and writing it back are later steps (see src/core/dme/).
+// fan stages. The read comes from a file or from the car (memory read over the K-line, src/core/dme/reader.ts, read
+// only). The target maps and conditions can be edited into a new file (checksums recomputed). Writing to the DME is
+// not part of the app yet.
 
 import {
   COOLING_EDITABLE, COOLING_LABELS, COOLING_LIMITS, type Draft, type ItemValues, buildEditedImage, capMap, quantizeAtMost, checkDefinitionFits, checkDraft, coolingItems, quantize, readItem,
 } from '../core/dme/calibration';
 import type { DmeItem } from '../core/dme/defs';
-import { type ChecksumCheck, type DmeImageInfo, SUPPORTED, checkChecksums, identifyImage } from '../core/dme/image';
+import { type ChecksumCheck, type DmeImageInfo, SUPPORTED, calibrationEditBlock, checkChecksums, identifyImage } from '../core/dme/image';
+import { DmeReader, type DmeReadResult, type ReadProgress, readFileName } from '../core/dme/reader';
+import { hasDs2Link } from '../core/coding/clusterEeprom';
+import type { DmeFamily } from '../core/dme/defs';
 import type { PageCtx } from './ctx';
 import { h } from './dom';
 
@@ -20,10 +24,92 @@ const K = {
   values: {} as Record<string, ItemValues>,
   draft: {} as Draft,
   msg: null as { kind: 'ok' | 'err' | 'warn' | 'info'; text: string } | null,
+  /** read from the car in this session (the edited file is then a calibration file) */
+  car: null as DmeReadResult | null,
+  reader: null as DmeReader | null,
+  progress: null as (ReadProgress & { t0: number; full: boolean }) | null,
+  full: false,
 };
 
 export function resetCooling() {
-  Object.assign(K, { name: '', bytes: null, info: null, sums: [], fit: [], values: {}, draft: {}, msg: null });
+  K.reader?.abort();
+  Object.assign(K, { name: '', bytes: null, info: null, sums: [], fit: [], values: {}, draft: {}, msg: null, car: null, reader: null, progress: null });
+}
+
+/** Loads a read (from a file or from the car) into the screen. */
+function load(b: Uint8Array, info: DmeImageInfo) {
+  K.bytes = b;
+  K.info = info;
+  K.sums = checkChecksums(b, info);
+  if (info.def) {
+    const names = coolingItems(info.def).flatMap((g) => g.items.map((i) => i.name));
+    K.fit = checkDefinitionFits(b, info, info.def, names);
+    if (!K.fit.length) for (const i of info.def.items) if (names.includes(i.name)) K.values[i.name] = readItem(b, info, info.def, i);
+  }
+}
+
+function saveFile(name: string, data: Uint8Array) {
+  const a = h('a', { href: URL.createObjectURL(new Blob([data as BlobPart], { type: 'application/octet-stream' })), download: name });
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+/** The DME the scan found, if this session can read it over the K-line. */
+function carDme(ctx: PageCtx | null): { hint?: DmeFamily; variant: string } | null {
+  if (!ctx || ctx.mode() === 'remote' || !hasDs2Link(ctx.session())) return null;
+  const m = ctx.found().find((x) => x.def.address === 0x12);
+  if (!m?.scan?.variant) return null;
+  const v = m.scan.variant.toLowerCase();
+  return { variant: m.scan.variant, hint: v.startsWith('ms42') ? 'MS42' : v.startsWith('ms43') ? 'MS43' : undefined };
+}
+
+const PHASE: Record<ReadProgress['phase'], string> = {
+  detect: 'Finding the DME type', calibration: 'Reading the calibration', descriptors: 'Reading the checksum descriptors', program: 'Reading the program (full backup)',
+};
+
+function progressText(): string {
+  const p = K.progress;
+  if (!p) return '';
+  const pct = p.total ? Math.round((p.done / p.total) * 100) : 0;
+  return `${PHASE[p.phase]}… ${pct}%`;
+}
+
+async function readCar(ctx: PageCtx, rerender: () => void) {
+  const dme = carDme(ctx);
+  const s = ctx.session();
+  if (!dme || !hasDs2Link(s)) return;
+  ctx.stopLive();
+  resetCooling();
+  const full = K.full;
+  const reader = new DmeReader(s);
+  K.reader = reader;
+  K.progress = { phase: 'detect', done: 0, total: 1, t0: Date.now(), full };
+  ctx.setBusy('dme');
+  rerender();
+  try {
+    const r = await reader.read({
+      full,
+      hint: dme.hint,
+      onProgress: (p) => {
+        K.progress = { ...p, t0: K.progress?.t0 ?? Date.now(), full };
+        const el = document.querySelector('#dm-progress');
+        if (el) el.textContent = progressText();
+      },
+    });
+    K.car = r;
+    K.name = readFileName(r, 'cal');
+    saveFile(K.name, r.calibration);
+    if (r.full) saveFile(readFileName(r, 'full'), r.image);
+    load(r.image, r.info);
+    ctx.log('info', `DME read: ${r.family} ${r.version}, ${r.full ? 'program and calibration' : 'calibration'} in ${Math.round(r.seconds)} s (${r.chunk} bytes per telegram)`);
+    K.msg = { kind: 'ok', text: `Read ${r.family} ${r.version} in ${Math.round(r.seconds)} s; the calibration passed its own checksum. The backup ${r.full ? 'files are' : 'file is'} in your downloads (${K.name}${r.full ? ` and ${readFileName(r, 'full')}` : ''}): keep ${r.full ? 'them' : 'it'}, ${r.full ? 'they are' : 'it is'} the way back to these values.` };
+  } catch (e) {
+    K.msg = { kind: 'err', text: `${(e as Error).message}${/did not answer/.test((e as Error).message) ? ' Ignition in position 2, K+DCAN cable in K-line mode with OBD pins 7 and 8 joined (an ELM327 cannot read the DME memory).' : ''}` };
+  }
+  K.reader = null;
+  K.progress = null;
+  ctx.setBusy('');
+  rerender();
 }
 
 const fmt = (v: number, d: number) => {
@@ -39,14 +125,7 @@ async function openFile(ctx: PageCtx | null, rerender: () => void, f: File) {
   try {
     const b = new Uint8Array(await f.arrayBuffer());
     const info = identifyImage(b);
-    K.bytes = b;
-    K.info = info;
-    K.sums = checkChecksums(b, info);
-    if (info.def) {
-      const names = coolingItems(info.def).flatMap((g) => g.items.map((i) => i.name));
-      K.fit = checkDefinitionFits(b, info, info.def, names);
-      if (!K.fit.length) for (const i of info.def.items) if (names.includes(i.name)) K.values[i.name] = readItem(b, info, info.def, i);
-    }
+    load(b, info);
     ctx?.log('info', `DME read opened: ${f.name}, ${info.family} ${info.version} (${info.kind === 'full' ? '512 KB' : 'calibration'})`);
   } catch (e) {
     K.msg = { kind: 'err', text: (e as Error).message };
@@ -61,8 +140,7 @@ function editBlock(): string | null {
   if (K.fit.length) return 'The definition does not fit this read.';
   const bad = K.sums.filter((s) => !s.ok);
   if (bad.length) return `The read does not pass its own checksum (${bad.map((s) => s.name).join(', ')}): it may be damaged. Read the DME again.`;
-  if (i.family === 'MS43' && i.kind !== 'full') return 'This is a 64 KB calibration read: an MS43 calibration can only be changed from a full 512 KB read, which also holds the calibration checksum description.';
-  return null;
+  return K.bytes ? calibrationEditBlock(K.bytes, i) : 'Nothing read.';
 }
 
 function setCell(name: string, r: number, c: number, v: number, rerender: () => void) {
@@ -157,11 +235,11 @@ function saveEdited(ctx: PageCtx | null, rerender: () => void) {
   try {
     const out = buildEditedImage(bytes, info, info.def, K.draft);
     const base = K.name.replace(/\.bin$/i, '');
-    const a = h('a', { href: URL.createObjectURL(new Blob([out.image as BlobPart], { type: 'application/octet-stream' })), download: `${base}_cooling.bin` });
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    // a read from the car holds only the calibration and the descriptors: the file is the calibration alone
+    const data = K.car ? out.image.slice(info.calStart, info.calStart + info.calSize) : out.image;
+    saveFile(`${base}_cooling.bin`, data);
     const cells = out.changes.reduce((n, c) => n + c.cells.length, 0);
-    K.msg = { kind: 'ok', text: `Saved ${base}_cooling.bin: ${cells} values in ${out.changes.length} ${out.changes.length === 1 ? 'item' : 'items'} changed, calibration checksums recomputed and checked (${out.checksums.map((s) => s.name).join(', ')}). Your original file is unchanged; keep it.` };
+    K.msg = { kind: 'ok', text: `Saved ${base}_cooling.bin${K.car ? ` (calibration only, ${info.calSize / 1024} KB)` : ''}: ${cells} values in ${out.changes.length} ${out.changes.length === 1 ? 'item' : 'items'} changed, calibration checksums recomputed and checked (${out.checksums.map((s) => s.name).join(', ')}). Your original ${K.car ? 'backup' : 'file'} is unchanged; keep it.` };
     ctx?.log('info', `Edited DME file saved: ${base}_cooling.bin (${cells} values)`);
   } catch (e) {
     K.msg = { kind: 'err', text: (e as Error).message };
@@ -172,18 +250,32 @@ function saveEdited(ctx: PageCtx | null, rerender: () => void) {
 export function renderCooling(ctx: PageCtx | null, rerender: () => void, back?: () => void): (Node | null)[] {
   const head = h('div', { class: 'mh' }, h('div', {}, h('p', { class: 'kicker' }, 'Coding · engine (DME)'), h('h1', {}, 'Engine cooling')));
   const intro = h('p', { class: 'lede-sm' }, 'The M52TU and M54 engines have an electric thermostat: the DME chooses the coolant temperature from maps, about 102 °C at part load and 87 °C at high load from the factory. This screen opens a read of the DME (Siemens MS42 or MS43), finds its software version, applies the matching definition and shows those maps, the conditions around them and the fan stages.');
-  const stage = h('div', { class: 'msg info' }, 'Works on a DME read file (.bin) for now. Reading the DME through the cable and writing it back come in later versions: nothing on this screen talks to the car.');
+  const stage = h('div', { class: 'msg info' }, 'Reads the DME through the cable (read only: memory reads, nothing is written) or opens a read file. Writing to the DME is not part of the app yet.');
+  const dme = carDme(ctx);
+  const reading = !!K.progress;
+  const busyElse = !!ctx?.busy() && !reading;
+  const fromCar = dme ? h('section', { class: 'cd-step' },
+    h('h2', {}, h('span', { class: 'cd-n' }, '1'), 'Read the DME'),
+    h('p', {}, `${/^native/i.test(dme.variant) ? 'The DME' : `The DME (${dme.variant.toUpperCase()})`} answered the scan. Reads the calibration and the few program bytes that describe its checksums, in about 2 minutes at the K-line’s 9600 baud, and saves it as a backup file. Engine off, ignition in position 2; a battery charger helps on long reads.`),
+    h('label', { class: 'opt' }, h('input', { type: 'checkbox', checked: K.full, disabled: reading, onchange: (e: Event) => { K.full = (e.target as HTMLInputElement).checked; } }),
+      h('span', {}, 'Also back up the whole program (about 15 minutes; the boot sector with the immobilizer data is never read)')),
+    h('div', { class: 'row' },
+      h('button', { class: 'btn primary', disabled: reading || busyElse, onclick: () => ctx && readCar(ctx, rerender) }, K.car ? 'Read again' : 'Read the DME'),
+      reading ? h('button', { class: 'btn', onclick: () => K.reader?.abort() }, 'Stop') : null,
+      reading ? h('span', { class: 'note', id: 'dm-progress' }, progressText()) : null),
+    busyElse ? h('p', { class: 'note' }, 'Another reading is running on the line; wait for it to finish.') : null)
+    : ctx?.session() ? h('div', { class: 'msg warn' }, ctx.mode() === 'remote' ? 'The DME is not read over a remote session; open a read file instead.' : 'The DME (address 0x12) did not answer the scan as an MS42 / MS43 over the K-line, so it cannot be read here. Open a read file instead.') : null;
   const input = h('input', { type: 'file', accept: '.bin,application/octet-stream', class: 'dm-file', 'aria-label': 'DME read file',
     onchange: (e: Event) => { const f = (e.target as HTMLInputElement).files?.[0]; if (f) void openFile(ctx, rerender, f); } });
   const step1 = h('section', { class: 'cd-step' },
-    h('h2', {}, h('span', { class: 'cd-n' }, '1'), 'Open a DME read'),
+    h('h2', {}, h('span', { class: 'cd-n' }, dme ? '·' : '1'), dme ? 'Or open a read file' : 'Open a DME read'),
     h('p', {}, 'A full read (512 KB) or a calibration read (MS43 64 KB, MS42 32 KB), as saved by MS4x Flasher and similar tools. The file stays on this computer.'),
     h('div', { class: 'row' },
       back ? h('button', { class: 'btn', onclick: back }, '← Back') : null,
       h('label', { class: 'btn primary dm-pick' }, K.info ? 'Open another read' : 'Choose .bin file', input),
       K.name ? h('span', { class: 'note dm-fname' }, K.name) : null));
   const msg = K.msg ? h('div', { class: `msg ${K.msg.kind}` }, K.msg.text) : null;
-  const top = [head, intro, stage, step1];
+  const top = [head, intro, stage, fromCar, step1];
   const i = K.info;
   if (!i) return [...top, msg, h('p', { class: 'refnote' }, `Definitions: MS4X Dev Team (ms4x.net, GPL-3.0). Supported: ${SUPPORTED()}.`)];
 
