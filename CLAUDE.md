@@ -11,6 +11,7 @@ Ferramenta de diagnóstico do BMW E46 que roda no navegador (Chrome/Edge, via We
 ## Regras que não mudam
 - **Somente leitura por padrão.** Leitura e apagar erros: liberados. Testes de atuador e resets: só depois de "Unlock tests & resets". Escrita permanente (codificação, EEPROM/flash, sincronização EWS, `*_PROGRAMMIEREN`, `*_SCHREIBEN`): sempre bloqueada. Funções desconhecidas são tratadas como escrita. A regra é aplicada em `src/core/api/safety.ts` e em `DiagSession.run`, antes de qualquer byte sair pelo cabo. Não enfraqueça isso.
 - **Única exceção (pedida pelo usuário, v1.3):** a curva do ponteiro de temperatura do painel, na tela Coding (`src/core/coding/clusterEeprom.ts`). Só painel 0x80 KOMBI46/KOMBI46R, só os bytes da curva achada por `findCurve`, só depois do backup completo do EEPROM salvo, conferindo o painel contra o backup antes de gravar, uma palavra por telegrama e releitura de cada uma. Não use esse caminho para outras gravações sem o usuário pedir; uma nova codificação segue o mesmo esquema.
+- **Calibração da DME (MS42/MS43, `src/core/dme/`), em construção:** por enquanto só leitura e edição de uma cópia do `.bin` (offline). A gravação na DME ainda não existe e, quando existir, segue o esquema da exceção acima: backup completo, definição conferida contra a imagem (`checkDefinitionFits`), checksums só recalculados quando conferiram na leitura original (`fixCalibrationChecksums`), só os itens de `COOLING_EDITABLE`.
 - **Sessão remota** (`src/core/remote/remote.ts`): quem decide é o computador do carro (`RemoteHost`). Somente leitura por padrão; apagar erros e testes só com aprovação do dono, na hora; escrita e acesso cru à linha K (`ds2Raw`) nunca passam.
 - **Arquivos da BMW (.prg/.grp, SGBD):** o Claude não embute nem redistribui esses arquivos. O pacote sai com a pasta `modulos/` vazia, e quem distribui coloca os arquivos nela (decisão do usuário, sob responsabilidade dele). Os testes usam a pasta do usuário via `ECU_DIR`.
 - **Visual:** proposta B "M Sport". Grafite/carbono, faixa tricolor M nas cores do logo E46Fanatics (#4290F6, #023D79, #E22619), fonte Titillium Web, valores medidos em âmbar (#ffa033), relógios de 270°. Menu lateral com seções (Car, Data, Workshop, More) e módulos em abas no topo. Logo em `src/web/assets/e46fanatics.svg`. Não usar o logo da BMW.
@@ -21,6 +22,8 @@ Ferramenta de diagnóstico do BMW E46 que roda no navegador (Chrome/Edge, via We
 - `npm run dev`: abre em http://localhost:5173 (Chrome/Edge para o cabo; o simulador funciona em qualquer navegador).
 - `ECU_DIR=/caminho/para/EDIABAS/Ecu npm test`: 69 testes. Os que precisam dos arquivos da BMW são pulados sem `ECU_DIR`.
 - `npm run typecheck`
+- `MS4X_DIR=/caminho npm test`: testes da calibração da DME com as imagens de fábrica do ms4x-net (pasta com clones de `ms4x-net/ms42` e `ms4x-net/ms43`; pulados sem ela).
+- `npx tsx scripts/build-dme-defs.ts $MS4X_DIR`: regenera `src/core/dme/defs.json` a partir dos XDFs (só os itens de termostática e ventoinha).
 - `npx tsx scripts/build-offline.ts`: gera `release/E46Fanatics Scan/` (pacote Windows/Mac com atalhos) e `release/E46Fanatics Scan - Mac/` (o `E46Fanatics Scan.app`), mais os zips.
 - `node design/build-mockups.mjs`: regenera as 3 propostas visuais.
 

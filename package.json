@@ -17,6 +17,7 @@
     "@fontsource/jetbrains-mono": "^5.3.0",
     "@fontsource/titillium-web": "^5.3.0",
     "@types/node": "^26.6.5",
+    "fast-xml-parser": "^5.11.2",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "vite": "^6.4.5",
