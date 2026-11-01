@@ -5,7 +5,7 @@
 import { existsSync, readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
-import { COOLING_EDITABLE, COOLING_GROUPS, checkDefinitionFits, checkValues, coolingItems, quantize, readItem, writeItem } from '../src/core/dme/calibration';
+import { COOLING_EDITABLE, COOLING_GROUPS, COOLING_LIMITS, buildEditedImage, capMap, checkDefinitionFits, quantizeAtMost, checkDraft, checkValues, coolingItems, quantize, readItem, writeItem } from '../src/core/dme/calibration';
 import { DME_DEFS, defFor } from '../src/core/dme/defs';
 import { checkChecksums, crc16, fixCalibrationChecksums, identifyImage } from '../src/core/dme/image';
 
@@ -152,5 +152,55 @@ describe.skipIf(!have)('stock images (ms4x-net)', () => {
   it('rejects files that are not a DME read', () => {
     expect(() => identifyImage(new Uint8Array(1000))).toThrow(/Not a Siemens/);
     expect(() => identifyImage(new Uint8Array(0x80000))).toThrow(/No MS42\/MS43 software version/);
+  });
+
+  it('factory values of every image sit inside the app limits', () => {
+    for (const p of [...images('ms43'), ...images('ms42')]) {
+      const b = load(p);
+      const info = identifyImage(b);
+      for (const [name, [lo, hi]] of Object.entries(COOLING_LIMITS)) {
+        const item = info.def!.items.find((i) => i.name === name);
+        if (!item) continue;
+        const v = readItem(b, info, info.def!, item).values.flat();
+        expect(v.every((x) => x >= lo && x <= hi), `${p} ${name} ${v.join(',')}`).toBe(true);
+      }
+    }
+  });
+
+  it('checks a draft and builds the edited file', () => {
+    const b = load(B25);
+    const info = identifyImage(b);
+    const def = info.def!;
+    const read = (n: string) => readItem(b, info, def, def.items.find((i) => i.name === n)!);
+    const cur = Object.fromEntries(['id_tco_sp_ect__n__maf_sub', 'id_tco_sp_ect_acin__n__maf_sub', 'c_tco_sp_toil_min'].map((n) => [n, read(n)]));
+    const off95 = capMap(cur.id_tco_sp_ect__n__maf_sub.values, 95);
+    const ac95 = capMap(cur.id_tco_sp_ect_acin__n__maf_sub.values, 95);
+    expect(off95[0]).toEqual([95, 95, 95, 95, 87, 87]);
+    const mapItem = cur.id_tco_sp_ect__n__maf_sub.item;
+    expect(quantize(mapItem, 95).value).toBe(95.25); // 0.75 °C steps
+    expect(quantizeAtMost(mapItem, 95)).toBe(94.5);
+    expect(quantizeAtMost(mapItem, 87)).toBe(87);
+    expect(checkDraft(def, cur, { id_tco_sp_ect__n__maf_sub: off95, id_tco_sp_ect_acin__n__maf_sub: ac95 })).toEqual({ errors: [], warnings: [] });
+    // A/C off lowered below the A/C map
+    expect(checkDraft(def, cur, { id_tco_sp_ect__n__maf_sub: capMap(off95, 85) }).errors.join()).toMatch(/A\/C on/);
+    expect(checkDraft(def, cur, { id_tco_sp_ect__n__maf_sub: capMap(off95, 85), id_tco_sp_ect_acin__n__maf_sub: capMap(ac95, 85) }).warnings.length).toBe(2);
+    expect(checkDraft(def, cur, { c_tco_sp_toil_min: [[120]] }).errors.join()).toMatch(/between 85 and 110/);
+    expect(checkDraft(def, cur, { id_ectpwm_add__n__tco_sp: [[0]] }).errors.join()).toMatch(/cannot be changed/);
+
+    const out = buildEditedImage(b, info, def, { id_tco_sp_ect__n__maf_sub: off95, id_tco_sp_ect_acin__n__maf_sub: ac95, c_tco_sp_toil_min: [[105]] });
+    expect(out.changes.map((c) => c.name)).toEqual(['id_tco_sp_ect__n__maf_sub', 'id_tco_sp_ect_acin__n__maf_sub']);
+    expect(out.changes[0].cells.length).toBe(32);
+    expect(out.changes[0].cells[0]).toEqual({ row: 0, col: 0, from: 102, to: 95.25 });
+    expect(checkChecksums(out.image, info).every((s) => s.ok)).toBe(true);
+    expect(() => buildEditedImage(b, info, def, { c_tco_sp_toil_min: [[105]] })).toThrow(/Nothing changed/);
+    // a calibration-only MS43 read can be looked at but not turned into a file
+    const cal = b.slice(0x70000), ci = identifyImage(cal);
+    expect(() => buildEditedImage(cal, ci, def, { id_tco_sp_ect__n__maf_sub: off95, id_tco_sp_ect_acin__n__maf_sub: ac95 })).toThrow(/full 512 KB/);
+    // MS42 too
+    const m = load(M52), mi = identifyImage(m);
+    const mOff = readItem(m, mi, mi.def!, mi.def!.items.find((i) => i.name === 'id_tco_sp_ect__n__maf_sub')!).values;
+    const mAc = readItem(m, mi, mi.def!, mi.def!.items.find((i) => i.name === 'id_tco_sp_ect_acin__n__maf_sub')!).values;
+    const mo = buildEditedImage(m, mi, mi.def!, { id_tco_sp_ect__n__maf_sub: capMap(mOff, 95), id_tco_sp_ect_acin__n__maf_sub: capMap(mAc, 95) });
+    expect(checkChecksums(mo.image, mi).every((s) => s.ok)).toBe(true);
   });
 });

@@ -75,7 +75,11 @@ function linear(eq: string, where: string): { scale: number; offset: number } {
 type Node = Record<string, any>;
 const arr = <T>(v: T | T[] | undefined): T[] => (v === undefined ? [] : Array.isArray(v) ? v : [v]);
 const hexnum = (s: string | number | undefined) => (s === undefined ? undefined : typeof s === 'number' ? s : parseInt(s, s.startsWith('0x') || s.startsWith('0X') ? 16 : 10));
-const text = (v: unknown) => (v === undefined || v === null ? '' : String(typeof v === 'object' ? (v as Node)['#text'] ?? '' : v)).trim();
+const entities = (s: string) => s
+  .replace(/&#x([0-9a-f]+);/gi, (_, x) => String.fromCodePoint(parseInt(x, 16)))
+  .replace(/&#(\d+);/g, (_, x) => String.fromCodePoint(Number(x)))
+  .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+const text = (v: unknown) => entities(v === undefined || v === null ? '' : String(typeof v === 'object' ? (v as Node)['#text'] ?? '' : v)).trim();
 
 function rawOf(ed: Node, where: string, defaults: { lsb: boolean; signed: boolean }): DmeRaw {
   const flags = hexnum(ed['@_mmedtypeflags']);

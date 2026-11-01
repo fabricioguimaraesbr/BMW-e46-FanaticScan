@@ -22,6 +22,7 @@ import { loadGarage, renderGarage, saveCurrentScan } from './garagePage';
 import { loggerRunning, renderLogger, resetLogger, stopLogger } from './loggerPage';
 import { renderService, resetService } from './servicePage';
 import { renderCoding, resetCoding } from './codingPage';
+import { renderCooling } from './coolingPage';
 import { renderVehicle, resetVehicle } from './vehiclePage';
 import { renderChecks, resetChecks, stopChecks } from './checksPage';
 import { renderLibrary } from './libraryPage';
@@ -48,7 +49,7 @@ import { confirmDialog, download, h, nodes, stamp, store } from './dom';
 
 // ------------------------------------------------------------------ state
 /** Sections of the side menu. Module pages (faults, live, functions) show the module tabs on top. */
-type Page = 'overview' | 'vehicle' | 'faults' | 'live' | 'functions' | 'checks' | 'service' | 'coding' | 'logger' | 'garage' | 'library' | 'log';
+type Page = 'overview' | 'vehicle' | 'faults' | 'live' | 'functions' | 'checks' | 'service' | 'coding' | 'cooling' | 'logger' | 'garage' | 'library' | 'log';
 const MODULE_PAGES: Page[] = ['faults', 'live', 'functions'];
 interface ModState {
   scan?: ScanEntry;
@@ -74,7 +75,7 @@ const S = {
   /** the cable looks slow (FTDI latency timer) */
   hint: '' as '' | 'latency',
   /** a screen opened from the start screen (no car connected) */
-  offline: '' as '' | 'garage' | 'library',
+  offline: '' as '' | 'garage' | 'library' | 'cooling',
   channel: null as ByteChannel | null,
   mode: null as 'cable' | 'sim' | 'remote' | null,
   /** connected through an ELM327 adapter: engine OBD-II only */
@@ -870,7 +871,7 @@ function render() {
   if (!S.session) {
     if (S.offline) {
       const back = () => { S.offline = ''; render(); };
-      const page = S.offline === 'garage' ? renderGarage(ctx, true, back) : renderLibrary(null, back, render);
+      const page = S.offline === 'garage' ? renderGarage(ctx, true, back) : S.offline === 'cooling' ? renderCooling(null, render, back) : renderLibrary(null, back, render);
       app.replaceChildren(top, h('div', { class: 'layout single' }, h('main', {}, ...nodes(page))), renderAppBar());
       return;
     }
@@ -1047,6 +1048,11 @@ function renderSetup() {
         h('button', { class: 'btn', onclick: () => { S.offline = 'library'; render(); } }, 'Open library'),
       ),
       h('div', { class: 'start-card mini' },
+        h('h2', {}, 'Engine cooling (DME)'),
+        h('p', {}, 'Open a read of an MS42 / MS43 engine computer (.bin) and see the electric thermostat target maps, the conditions around them and the fan stages. No car needed.'),
+        h('button', { class: 'btn', onclick: () => { S.offline = 'cooling'; render(); } }, 'Open a DME read'),
+      ),
+      h('div', { class: 'start-card mini' },
         h('h2', {}, 'Remote session'),
         h('p', {}, 'Read the car of a friend from the community: paste the invite code they send you. To share your own car, connect it first and use “Remote session” in the top bar.'),
         h('button', { class: 'btn', onclick: openRemote }, 'Connect to a car'),
@@ -1067,7 +1073,7 @@ function statusOf(st: ModState | undefined): { cls: string; text: string } {
 const SECTIONS: [string, [Page, string][]][] = [
   ['Car', [['overview', 'Overview'], ['vehicle', 'Vehicle'], ['faults', 'Faults']]],
   ['Data', [['live', 'Live Data'], ['logger', 'Data Logger']]],
-  ['Workshop', [['checks', 'Guided checks'], ['service', 'Service'], ['functions', 'Tests & Functions'], ['coding', 'Coding']]],
+  ['Workshop', [['checks', 'Guided checks'], ['service', 'Service'], ['functions', 'Tests & Functions'], ['coding', 'Coding'], ['cooling', 'Engine cooling']]],
   ['More', [['garage', 'Garage'], ['library', 'Library'], ['log', 'Log']]],
 ];
 const foundModules = () => ALL_E46_MODULES.filter((m) => S.mods.get(m.group)?.scan?.variant);
@@ -1142,6 +1148,7 @@ function renderMain() {
   if (S.page === 'overview') return put(renderOverview());
   if (S.page === 'service') return put(renderService(ctx));
   if (S.page === 'coding') return put(renderCoding(ctx));
+  if (S.page === 'cooling') return put(renderCooling(ctx, () => ctx.rerender()));
   if (S.page === 'library') return put(renderLibrary(ctx));
   if (S.page === 'logger') return put(renderLogger(ctx));
   if (S.page === 'garage') return put(renderGarage(ctx));

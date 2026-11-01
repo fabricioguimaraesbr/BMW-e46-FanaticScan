@@ -2,7 +2,7 @@
 // of an image in memory; nothing here talks to the car.
 
 import type { DmeAxis, DmeItem, DmeRaw, DmeVersionDef } from './defs';
-import type { DmeImageInfo } from './image';
+import { type ChecksumCheck, type DmeImageInfo, fixCalibrationChecksums } from './image';
 
 export interface ItemValues {
   item: DmeItem;
@@ -71,6 +71,14 @@ export function readItem(b: Uint8Array, info: DmeImageInfo, def: DmeVersionDef, 
 export function quantize(item: DmeItem, value: number): { raw: number; value: number } {
   const raw = Math.round((value - item.offset) / item.scale);
   return { raw, value: round(item.scale * raw + item.offset) };
+}
+
+/** The highest stored value that is not above `value` (for caps: "at most 95 °C" must not become 95.25 °C). */
+export function quantizeAtMost(item: DmeItem, value: number): number {
+  const q = quantize(item, value);
+  if (q.value <= value + 1e-9) return q.value;
+  const step = Math.abs(item.scale);
+  return round(q.value - step);
 }
 
 export interface EditCheck {
@@ -199,4 +207,111 @@ export const COOLING_EDITABLE = [
 export function coolingItems(def: DmeVersionDef): { title: string; note: string; items: DmeItem[] }[] {
   return COOLING_GROUPS.map((g) => ({ ...g, items: g.items.map((n) => def.items.find((i) => i.name === n)).filter((i): i is DmeItem => !!i) }))
     .filter((g) => g.items.length);
+}
+
+// ---------------------------------------------------------------------------------------------- editing rules
+/**
+ * Limits the app itself puts on the editable items, tighter than what the bytes can hold. Factory M54/M52TU values
+ * sit inside them (maps 80–102 °C, warm-up target 105 °C, oil 95 °C, oil limit 125 °C). Units are the item's (°C).
+ */
+export const COOLING_LIMITS: Record<string, [number, number]> = {
+  id_tco_sp_ect__n__maf_sub: [80, 110],
+  id_tco_sp_ect_acin__n__maf_sub: [80, 110],
+  c_tco_sp_toil_min: [85, 110],
+  c_toil_min_ect: [60, 110],
+  c_tam_min_ect: [-20, 30],
+  c_tia_min_ect: [-20, 40],
+  c_toil_max_ect: [110, 135],
+  c_tia_max_ect: [50, 80],
+  c_tco_ex_max_ect: [95, 110],
+  c_tco_sp_tia_max: [80, 100],
+  c_tco_sp_tco_ex_max: [80, 100],
+};
+
+export type Draft = Record<string, number[][]>;
+
+export interface DraftCheck {
+  errors: string[];
+  warnings: string[];
+}
+
+const MAP_OFF = 'id_tco_sp_ect__n__maf_sub';
+const MAP_AC = 'id_tco_sp_ect_acin__n__maf_sub';
+
+/** Checks a set of edits (item name → new values) against the stored type, the app limits and each other. */
+export function checkDraft(def: DmeVersionDef, current: Record<string, ItemValues>, draft: Draft): DraftCheck {
+  const errors: string[] = [], warnings: string[] = [];
+  const val = (n: string) => draft[n] ?? current[n]?.values;
+  for (const [name, values] of Object.entries(draft)) {
+    const item = def.items.find((i) => i.name === name);
+    if (!item) { errors.push(`${name} is not in the ${def.family} ${def.version} definition.`); continue; }
+    if (!COOLING_EDITABLE.includes(name)) { errors.push(`${COOLING_LABELS[name] ?? name} cannot be changed here.`); continue; }
+    errors.push(...checkValues(item, values).errors);
+    const lim = COOLING_LIMITS[name];
+    const label = COOLING_LABELS[name] ?? name;
+    if (lim && values.flat().some((v) => v < lim[0] || v > lim[1])) errors.push(`${label}: keep it between ${lim[0]} and ${lim[1]} ${item.units}.`);
+  }
+  const off = val(MAP_OFF), ac = val(MAP_AC);
+  if (off && ac && (draft[MAP_OFF] || draft[MAP_AC]) && ac.some((row, r) => row.some((v, c) => v > off[r][c] + 1e-9))) {
+    errors.push('With the A/C on, the target must not be higher than with it off (the condenser heats the radiator).');
+  }
+  for (const n of [MAP_OFF, MAP_AC]) {
+    if (!draft[n] || !current[n]) continue;
+    const was = current[n].values;
+    if (draft[n].some((row, r) => row.some((v, c) => v < 90 && was[r][c] >= 95))) {
+      warnings.push(`${COOLING_LABELS[n]}: below 90 °C where the factory runs hot. The engine uses more fuel cooler, and the MS4X wiki reports M54B30 engines losing power with low targets.`);
+    }
+  }
+  const before = draft.c_tco_sp_toil_min?.[0]?.[0];
+  if (before !== undefined && current.c_tco_sp_toil_min && before < current.c_tco_sp_toil_min.values[0][0]) {
+    warnings.push('A lower target before warm-up makes the engine reach operating temperature later.');
+  }
+  return { errors, warnings };
+}
+
+/** Map preset: every cell above `cap` comes down to it (cells already cooler stay as they are). */
+export function capMap(values: number[][], cap: number): number[][] {
+  return values.map((row) => row.map((v) => Math.min(v, cap)));
+}
+
+export interface EditedImage {
+  image: Uint8Array;
+  /** per item: cells that change, old → new (quantized) */
+  changes: { name: string; cells: { row: number; col: number; from: number; to: number }[] }[];
+  checksums: ChecksumCheck[];
+}
+
+/**
+ * Builds the edited image: checks the definition against the image and the draft against the rules, writes each
+ * item, recomputes the calibration checksums and reads everything back. Throws when anything does not add up.
+ */
+export function buildEditedImage(original: Uint8Array, info: DmeImageInfo, def: DmeVersionDef, draft: Draft): EditedImage {
+  if (info.family === 'MS43' && info.kind !== 'full') throw new Error('Changing an MS43 calibration needs a full 512 KB read (the calibration sum is described in the program).');
+  const names = COOLING_GROUPS.flatMap((g) => g.items);
+  const fit = checkDefinitionFits(original, info, def, names);
+  if (fit.length) throw new Error(`The definition does not fit this read: ${fit[0]}`);
+  const current: Record<string, ItemValues> = {};
+  for (const i of def.items) if (names.includes(i.name)) current[i.name] = readItem(original, info, def, i);
+  const check = checkDraft(def, current, draft);
+  if (check.errors.length) throw new Error(check.errors.join(' '));
+  let img = original;
+  const changes: EditedImage['changes'] = [];
+  for (const [name, values] of Object.entries(draft)) {
+    const item = def.items.find((i) => i.name === name)!;
+    const was = current[name].values;
+    const cells = values.flatMap((row, r) => row.map((v, c) => ({ row: r, col: c, from: was[r][c], to: quantize(item, v).value })))
+      .filter((x) => Math.abs(x.from - x.to) > 1e-9);
+    if (!cells.length) continue;
+    img = writeItem(img, info, def, item, values).image;
+    changes.push({ name, cells });
+  }
+  if (!changes.length) throw new Error('Nothing changed.');
+  const fixed = fixCalibrationChecksums(original, img, info);
+  // read back what will be in the file
+  for (const ch of changes) {
+    const item = def.items.find((i) => i.name === ch.name)!;
+    const back = readItem(fixed.image, info, def, item).values;
+    if (ch.cells.some((x) => Math.abs(back[x.row][x.col] - x.to) > 1e-9)) throw new Error(`${ch.name} did not read back as written.`);
+  }
+  return { image: fixed.image, changes, checksums: fixed.fixed };
 }
