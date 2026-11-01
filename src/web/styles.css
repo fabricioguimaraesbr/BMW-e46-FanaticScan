@@ -506,7 +506,8 @@ pre.report { margin: 0; padding: 18px 20px; border-radius: var(--r-l); border: 1
 .appbar-sep { width: 1px; height: 12px; background: var(--line-2); flex: none; }
 .appbar-ai { color: var(--m-light); }
 .appbar-ai::before { content: '✦ '; }
-@media (max-width: 640px) { .appbar { gap: 8px; font-size: 11.5px; padding: 0 10px; } .appbar small { display: none; } }
+.appbar-short { display: none; }
+@media (max-width: 640px) { .appbar { gap: 8px; font-size: 11.5px; padding: 0 10px; } .appbar small { display: none; } .appbar > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .appbar-long { display: none; } .appbar-short { display: inline; } }
 
 /* ------------------------------------------------------------ v1.2: cable options, report, garage, logger, service */
 .muted { color: var(--dim); }

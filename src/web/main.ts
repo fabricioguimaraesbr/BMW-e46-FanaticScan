@@ -854,15 +854,15 @@ function updateLive() {
 }
 
 // ------------------------------------------------------------------ rendering
-/** Bar at the bottom of every screen: version, author, AI note. */
+/** Bar at the bottom of every screen: version and who makes the app. */
 function renderAppBar() {
   return h('footer', { class: 'appbar' },
     h('span', { class: 'appbar-mark', 'aria-hidden': 'true' }),
-    h('span', {}, h('b', {}, 'E46Fanatics Scan'), ` v${__APP_VERSION__}`, h('small', {}, ` · build ${__APP_BUILD__}`)),
+    h('span', {}, h('b', {}, 'E46Fanatics Scan'), ` v${__APP_VERSION__}`),
     h('span', { class: 'appbar-sep', 'aria-hidden': 'true' }),
-    h('span', {}, 'Developed by ', h('b', {}, 'Fabricio Guimarães')),
-    h('span', { class: 'appbar-sep', 'aria-hidden': 'true' }),
-    h('span', { class: 'appbar-ai' }, 'Built with artificial intelligence'),
+    h('span', { class: 'appbar-ai', title: 'Developed by members of the E46Fanatics community, with AI-assisted reverse engineering' },
+      h('span', { class: 'appbar-long' }, 'Developed by members of the E46Fanatics community, with AI-assisted reverse engineering'),
+      h('span', { class: 'appbar-short' }, 'By E46Fanatics members, AI-assisted')),
   );
 }
 
