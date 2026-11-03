@@ -67,6 +67,7 @@ ELM327 com microcontrolador PIC18F25K80 regravado com o firmware de substituiç�
 - Primeira gravação do firmware: com programador PICkit 3/4 (abre o adaptador); depois as atualizações vão pelo app Deep OBD. Ou comprar já gravado.
 - Protocolo em `src/core/transport/DeepObdChannel.ts` (cabeçalho com baud/2, flags de paridade e sem eco, tempo entre bytes, tamanho, soma; pulso de 5 baud com resposta automática do key byte), reimplementado a partir do `EdCustomAdapterCommon.cs`. Simulador `src/core/sim/deepObdSim.ts`, testes `tests/deepobd.test.ts`.
 - Pelo Bluetooth a gravação no painel (Coding) fica bloqueada: só pelo cabo.
+- **Wi-Fi (só no app Android):** botão **Wi-Fi** no cartão ELM327. O celular entra antes na rede do adaptador (WiFi_OBDII ou parecida). O app tenta 192.168.0.10:35000 (ELM327 Wi-Fi original) e 192.168.4.1:23 (Deep OBD com esp-link), com o socket preso à rede Wi-Fi (`TcpSocketPlugin.java`), e detecta o firmware do mesmo jeito. Com Deep OBD por Wi-Fi, liga o modo de escape (0x00/0xFF como FF, byte^0x80) se a rede perder bytes zero. No Wi-Fi, o Deep OBD exige regravar também o ESP8266 (esp-link, com conversor USB-serial de 3,3 V), além do PIC.
 
 ### Android (celular)
 

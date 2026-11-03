@@ -47,3 +47,10 @@ describe('Deep OBD adapter on the simulated E46', () => {
     expect(await DeepObdChannel.probe(elm)).toBeNull();
   });
 });
+
+describe('Deep OBD escape mode (Wi-Fi)', () => {
+  it('escapes 0x00 and 0xFF like EdiabasLib', async () => {
+    const { escapeBytes } = await import('../src/core/transport/DeepObdChannel');
+    expect(Array.from(escapeBytes([0x00, 0x12, 0xff, 0x80]))).toEqual([0xff, 0x80, 0x12, 0xff, 0x7f, 0x80]);
+  });
+});

@@ -42,6 +42,7 @@ import { BleElmChannel, bleAvailable } from './BleElmChannel';
 import { BtClassicChannel, btClassicAvailable, pairedAdapters, type PairedDevice } from './BtClassicChannel';
 import { Elm327 } from '../core/native/elm327';
 import { SimElmChannel } from '../core/sim/elmSim';
+import { TcpChannel, wifiAvailable } from './TcpChannel';
 import { SimDeepObdAdapter } from '../core/sim/deepObdSim';
 import { DeepObdChannel, versionText } from '../core/transport/DeepObdChannel';
 
@@ -266,7 +267,7 @@ function pickPaired(list: PairedDevice[]): Promise<PairedDevice | null> {
 }
 
 /** ELM327 adapter (Bluetooth LE, classic Bluetooth in the app, USB or paired serial port on a computer, or simulated). */
-async function connectElm(kind: 'ble' | 'classic' | 'serial' | 'sim' | 'simdeep') {
+async function connectElm(kind: 'ble' | 'classic' | 'serial' | 'wifi' | 'sim' | 'simdeep') {
   S.connError = '';
   try {
     let ch: ByteChannel;
@@ -276,6 +277,7 @@ async function connectElm(kind: 'ble' | 'classic' | 'serial' | 'sim' | 'simdeep'
     } else if (kind === 'simdeep') {
       ch = new SimDeepObdAdapter(new SimChannel(createE46({ drive: (simDrive = new DriveCycle(0)) })));
     } else if (kind === 'ble') ch = await BleElmChannel.request();
+    else if (kind === 'wifi') ch = await TcpChannel.find((t) => log('info', t));
     else if (kind === 'classic') {
       const dev = await pickPaired(await pairedAdapters());
       if (!dev) return;
@@ -1057,6 +1059,7 @@ function renderSetup() {
         h('h2', {}, 'ELM327 adapter'),
         h('p', {}, 'A stock ELM327 reads the engine only (standard OBD-II codes, clearing, live data). An ELM327 with a PIC18F25K80 reflashed with the Deep OBD firmware reads every module, like the cable: the app detects it by itself. The E46 needs OBD pins 7 and 8 joined for the other modules.'),
         h('div', { class: 'row' },
+          wifiAvailable() ? h('button', { class: 'btn', onclick: () => connectElm('wifi'), title: 'Wi-Fi adapters (network WiFi_OBDII or similar): join its Wi-Fi in Android\'s settings first' }, 'Wi-Fi') : null,
           btClassicAvailable() ? h('button', { class: 'btn', onclick: () => connectElm('classic'), title: 'Most ELM327 v1.5 adapters: pair it in Android\'s Bluetooth settings first' }, 'Bluetooth (paired)') : null,
           bleAvailable() ? h('button', { class: 'btn', onclick: () => connectElm('ble'), title: 'Bluetooth LE adapters (Vgate iCar BLE, vLinker, iOS-compatible ELM327)' }, 'Bluetooth LE') : null,
           webSerialAvailable() ? h('button', { class: 'btn', onclick: () => connectElm('serial'), title: 'USB ELM327, or a classic Bluetooth adapter paired with this computer (it shows up as a serial port)' }, 'USB / serial port') : null,

@@ -94,6 +94,19 @@ export interface DeepObdInfo {
   ignition?: number;
 }
 
+/** Escape mode (Wi-Fi links that lose 0x00 bytes): 0x00 and 0xFF are sent as FF, byte ^ 0x80. */
+export const ESCAPE_CODE = 0xff;
+export const ESCAPE_MASK = 0x80;
+export function escapeBytes(b: ArrayLike<number>): Uint8Array {
+  const out: number[] = [];
+  for (let i = 0; i < b.length; i++) {
+    const x = b[i];
+    if (x === 0 || x === ESCAPE_CODE) out.push(ESCAPE_CODE, x ^ ESCAPE_MASK);
+    else out.push(x);
+  }
+  return new Uint8Array(out);
+}
+
 export const versionText = (v: number) => `${v >> 8}.${v & 0xff}`;
 
 /**
@@ -108,6 +121,8 @@ export class DeepObdChannel extends QueuedChannel {
   private dropEcho: number[] = [];
   private raw: ByteChannel;
   info: DeepObdInfo = { type: 0, version: 0 };
+  /** writes are escaped (see escapeBytes) */
+  escape = false;
   /** Whole frames per write (ISO 9141 needs 5–20 ms between tester bytes: the adapter keeps that time). */
   readonly wholeFrames = true;
 
@@ -136,11 +151,40 @@ export class DeepObdChannel extends QueuedChannel {
     if (!info) return null;
     const ch = new DeepObdChannel(raw);
     deepObdState.connected = true;
+    if ((raw as Partial<{ wifi: boolean }>).wifi) await ch.setupEscape(log);
     ch.info = { type: (info[4] << 8) | info[5], version: (info[6] << 8) | info[7] };
     if (ch.info.type < 2 || ch.info.version < 3) {
       log?.(`Deep OBD adapter firmware ${versionText(ch.info.version)} is too old: update it with the Deep OBD app`);
     }
     return ch;
+  }
+
+  /**
+   * Wi-Fi: some ESP bridges drop 0x00 bytes. Test with an adapter request that contains one (as EdiabasLib does);
+   * if it gets no answer, switch the adapter and this channel to escape mode.
+   */
+  private async setupEscape(log?: (s: string) => void) {
+    const probe = async (tel: number[], escape: boolean) => {
+      const t = [...tel, 0];
+      t[t.length - 1] = sum8(t, t.length - 1);
+      this.discardInput();
+      this.dropEcho = [...t];
+      await this.raw.write(escape ? escapeBytes(t) : new Uint8Array(t));
+      const r = await this.read(6, 800);
+      return r.length === 6 && sum8(r, 5) === r[5];
+    };
+    if (await probe([0x82, 0xf1, 0xf1, 0x82, 0x00], false)) return;
+    // escape configuration: mode (write escape = 2), code, mask, each XOR 0x55
+    const cfg = [0x84, 0xf1, 0xf1, 0x06, 0x02 ^ 0x55, ESCAPE_CODE ^ 0x55, ESCAPE_MASK ^ 0x55, 0];
+    cfg[7] = sum8(cfg, 7);
+    this.discardInput();
+    this.dropEcho = [...cfg];
+    await this.raw.write(new Uint8Array(cfg));
+    const r = await this.read(8, 800);
+    if (r.length === 8 && ((r[4] ^ 0x55) & 0x02)) {
+      this.escape = true;
+      log?.('Deep OBD over Wi-Fi: escape mode on (the Wi-Fi link drops zero bytes)');
+    } else log?.('Deep OBD over Wi-Fi: zero bytes may be lost and the adapter did not accept escape mode');
   }
 
   /** Reads the battery voltage at the OBD socket (firmware with type ≥ 2). */
@@ -163,10 +207,14 @@ export class DeepObdChannel extends QueuedChannel {
     tel[tel.length - 1] = sum8(tel, tel.length - 1);
     this.discardInput();
     this.dropEcho = [...tel];
-    await this.raw.write(new Uint8Array(tel));
+    await this.send(new Uint8Array(tel));
     const r = await this.read(len, 600);
     if (r.length < len || sum8(r, len - 1) !== r[len - 1]) return null;
     return Array.from(r);
+  }
+
+  private send(b: Uint8Array) {
+    return this.raw.write(this.escape ? escapeBytes(b) : b);
   }
 
   get name() {
@@ -199,12 +247,12 @@ export class DeepObdChannel extends QueuedChannel {
   async write(data: Uint8Array) {
     if (this.cfg.baudRate === 115200) {
       this.dropEcho = Array.from(data);
-      await this.raw.write(data);
+      await this.send(data);
       return;
     }
     // ISO 9141 (10400 baud): 6 ms between tester bytes, as on the cable
     const ibt = this.cfg.baudRate === 10400 ? 6 : 0;
-    await this.raw.write(klineTelegram(this.cfg, data, this.info.version, ibt));
+    await this.send(klineTelegram(this.cfg, data, this.info.version, ibt));
   }
 
   /**
@@ -214,7 +262,7 @@ export class DeepObdChannel extends QueuedChannel {
   async wake5Baud(addr: number, autoKeyByteDelayMs = 30) {
     const bits = (addr << 1) | 0x200;
     this.discardInput();
-    await this.raw.write(pulseTelegram(this.cfg, bits, 10, 200, this.info.version, autoKeyByteDelayMs));
+    await this.send(pulseTelegram(this.cfg, bits, 10, 200, this.info.version, autoKeyByteDelayMs));
     await sleep(10 * 200);
   }
 }

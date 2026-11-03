@@ -9,6 +9,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(UsbBridgePlugin.class);
         registerPlugin(BtSerialPlugin.class);
+        registerPlugin(TcpSocketPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }
