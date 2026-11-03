@@ -57,6 +57,8 @@ export class Iso9141 {
     this.info('OBD-II: 5-baud wake-up of address 0x33');
     // start bit (0), 8 data bits LSB first, stop bit (1); 200 ms per bit, scheduled on absolute time to avoid drift
     const addr = 0x33;
+    const adapter = this.ch as Partial<{ wake5Baud(addr: number, autoKeyByteDelayMs?: number): Promise<void> }>;
+    if (adapter.wake5Baud) return this.initByAdapter(addr, adapter.wake5Baud.bind(this.ch));
     const bits = [0, ...Array.from({ length: 8 }, (_, i) => (addr >> i) & 1), 1];
     const t0 = performance.now();
     for (let i = 0; i < bits.length; i++) {
@@ -95,6 +97,32 @@ export class Iso9141 {
     return true;
   }
 
+  /** Adapters that send the 5-baud address themselves and answer the second key byte (Deep OBD firmware). */
+  private async initByAdapter(addr: number, wake: (addr: number, autoKeyByteDelayMs?: number) => Promise<void>): Promise<boolean> {
+    this.ch.discardInput();
+    await wake(addr, 30);
+    const head = await this.readSkippingZeros(3, 1500);
+    if (head[0] !== 0x55 || head.length < 3) {
+      this.info(head.length ? `OBD-II: unexpected sync byte ${head[0].toString(16)}` : 'OBD-II: no answer to wake-up');
+      this.opts.onLink?.('noanswer');
+      return false;
+    }
+    this.keyBytes = [head[1], head[2]];
+    // the adapter sent ~KB2 by itself; the engine confirms with ~address
+    const inv = await this.ch.read(1, 400);
+    if (inv[0] !== (~addr & 0xff)) {
+      this.info('OBD-II: engine did not confirm the wake-up');
+      this.opts.onLink?.('noanswer');
+      return false;
+    }
+    this.info(`OBD-II: connected through the adapter (key bytes ${head[1].toString(16)} ${head[2].toString(16)})`);
+    this.ready = true;
+    this.lastRx = Date.now();
+    this.opts.onLink?.('answer');
+    this.startKeepAlive();
+    return true;
+  }
+
   private async readSkippingZeros(n: number, timeout: number) {
     const end = Date.now() + timeout;
     for (;;) {
@@ -109,6 +137,11 @@ export class Iso9141 {
   /** Tester bytes need 5-20 ms between them (P4); the K-line echoes every byte. */
   private async writeEcho(bytes: Uint8Array) {
     this.opts.onTraffic?.('tx', bytes);
+    if ((this.ch as Partial<{ wholeFrames: boolean }>).wholeFrames) {
+      // the adapter spaces the bytes itself and returns no echo
+      await this.ch.write(bytes);
+      return;
+    }
     for (const b of bytes) {
       await this.ch.write(new Uint8Array([b]));
       await this.ch.read(1, 60); // echo
@@ -135,7 +168,8 @@ export class Iso9141 {
       }
       // collect until the line is quiet; P2 max is 50 ms, plus USB latency
       const bytes: number[] = [];
-      const first = await this.ch.read(1, 400);
+      // Bluetooth adapters add their round trip before the first byte
+      const first = await this.ch.read(1, (this.ch as Partial<{ wholeFrames: boolean }>).wholeFrames ? 900 : 400);
       if (first.length) {
         bytes.push(first[0]);
         for (;;) {

@@ -9,9 +9,13 @@ import {
 import type { PageCtx } from './ctx';
 import { h } from './dom';
 import { isNativeApp } from './nativeApp';
+import { deepObdState } from '../core/transport/DeepObdChannel';
+
+/** No cluster writes in the app or over Bluetooth (a dropped link in the middle of a write). */
+const noWrite = () => isNativeApp() || deepObdState.connected;
 
 /** In the Android app the backup is saved asynchronously and cannot be confirmed before writing: write from a computer. */
-const NATIVE_NO_WRITE = 'Writing the cluster is only done from the computer (Chrome or Edge on Mac/Windows), where the backup file is confirmed before writing. On the phone you can read the cluster and save the backup.';
+const NATIVE_NO_WRITE = 'Writing the cluster is only done from the computer with the cable (Chrome or Edge on Mac/Windows), where the backup file is confirmed before writing and the link cannot drop like Bluetooth. Here you can read the cluster and save the backup.';
 
 const C = {
   eeprom: null as ClusterEeprom | null,
@@ -113,7 +117,7 @@ function confirmWrite(title: string, lines: string[]): Promise<boolean> {
 }
 
 async function doWrite(ctx: PageCtx, kind: 'curve' | 'original' | 'file', file?: Uint8Array) {
-  if (isNativeApp()) {
+  if (noWrite()) {
     C.msg = { kind: 'warn', text: NATIVE_NO_WRITE };
     ctx.rerender();
     return;
@@ -367,8 +371,8 @@ export function renderCoding(ctx: PageCtx): (Node | null)[] {
     h('h2', {}, h('span', { class: 'cd-n' }, '3'), 'Compare and write'),
     diffView(curve, b.image, next),
     h('p', { class: 'note' }, 'Only the marked bytes change. The cluster must still hold exactly what was read; it is checked again right before writing, and every word is read back after.'),
-    isNativeApp() ? h('div', { class: 'msg warn' }, NATIVE_NO_WRITE) : !C.backupSaved ? h('div', { class: 'msg warn' }, 'Save the backup file first.') : null,
-    isNativeApp() ? null : h('div', { class: 'row' },
+    noWrite() ? h('div', { class: 'msg warn' }, NATIVE_NO_WRITE) : !C.backupSaved ? h('div', { class: 'msg warn' }, 'Save the backup file first.') : null,
+    noWrite() ? null : h('div', { class: 'row' },
       h('button', { class: 'btn danger', disabled: busy || !changed || !!check.errors.length || !C.backupSaved, onclick: () => doWrite(ctx, 'curve') }, C.busy === 'write' ? 'Writing…' : 'Write to cluster'),
       h('button', { class: 'btn', disabled: busy || sameCurve(findCurve(b.original)?.points ?? [], curve.points, format), onclick: () => doWrite(ctx, 'original'), title: 'Writes back the curve this cluster had when it was first read in this session' }, 'Put back the original curve'),
       h('button', { class: 'btn', disabled: busy, onclick: () => restoreFromFile(ctx), title: 'Takes only the gauge curve from a backup file saved earlier' }, 'Restore curve from a backup file…')),

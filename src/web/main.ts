@@ -42,6 +42,8 @@ import { BleElmChannel, bleAvailable } from './BleElmChannel';
 import { BtClassicChannel, btClassicAvailable, pairedAdapters, type PairedDevice } from './BtClassicChannel';
 import { Elm327 } from '../core/native/elm327';
 import { SimElmChannel } from '../core/sim/elmSim';
+import { SimDeepObdAdapter } from '../core/sim/deepObdSim';
+import { DeepObdChannel, versionText } from '../core/transport/DeepObdChannel';
 
 /** Desktop Chrome/Edge: Web Serial (the OS drives the FTDI chip). Chrome on Android: WebUSB with our own FTDI driver. */
 const cableApi = (): 'serial' | 'usb' | null => (webSerialAvailable() ? 'serial' : webUsbAvailable() ? 'usb' : null);
@@ -183,8 +185,23 @@ async function connect(mode: 'cable' | 'sim') {
   S.connError = '';
   try {
     const ch = mode === 'sim' ? new SimChannel(createE46({ drive: (simDrive = new DriveCycle(0)) })) : cableApi() === 'serial' ? await WebSerialChannel.request() : await WebUsbFtdiChannel.request();
+    await startCarSession(ch, mode);
+  } catch (e) {
+    const m = (e as Error).message ?? String(e);
+    if (!/No port selected|No device selected|cancel/i.test(m))
+      S.connError = cableApi() === 'usb'
+        ? `Could not open the cable: ${m}. Unplug the cable and plug it in again, and allow access when Android asks.`
+        : `Could not open the cable: ${m}. Close INPA or BMW Scanner if they are using the port.`;
+    render();
+  }
+}
+
+/** Full session (DS2 + OBD-II, module files) on a K-line channel: the cable, the simulator or a Deep OBD adapter. */
+async function startCarSession(ch: ByteChannel, mode: 'cable' | 'sim', deepObd = false) {
     const iface = new ObdInterface(ch, {
-      dtrMode: mode === 'sim' ? 'off' : S.dtrMode,
+      dtrMode: mode === 'sim' || deepObd ? 'off' : S.dtrMode,
+      // the Deep OBD firmware drops the K-line echo; Bluetooth adds its round trip to every answer
+      ...(deepObd ? { echo: 'off' as const, extraTimeout: 150 } : {}),
       onHint: (k) => {
         S.hint = k;
         renderMain();
@@ -207,6 +224,7 @@ async function connect(mode: 'cable' | 'sim') {
     S.iface = iface;
     S.hint = '';
     S.mode = mode;
+    S.elm = false;
     link.lastAnswer = link.lastNoAnswer = 0;
     const onJob = (r: JobResponse, ms: number) => log('job', `${r.sgbd}.${r.job} — ${r.error ? r.error.text : jobStatus(r.resultSets) || 'OK'} (${ms} ms)`);
     const native = new NativeSession({
@@ -222,17 +240,9 @@ async function connect(mode: 'cable' | 'sim') {
     });
     // module files for what is in the "modulos" folder, plug & play for anything missing
     S.session = files.count ? new HybridSession(new DiagSession({ files, iface, onJob }), native, () => iface.resetLine()) : native;
-    log('info', `Connected: ${ch.name} · ${S.session.kind === 'native' ? 'plug-and-play mode (no module files)' : `${files.count} module files, plug & play for the rest`}${mode === 'cable' && S.dtrMode === 'kdcan' ? ' · K+DCAN line control on' : ''}`);
+    log('info', `Connected: ${ch.name} · ${S.session.kind === 'native' ? 'plug-and-play mode (no module files)' : `${files.count} module files, plug & play for the rest`}${mode === 'cable' && !deepObd && S.dtrMode === 'kdcan' ? ' · K+DCAN line control on' : ''}`);
     render();
     scan();
-  } catch (e) {
-    const m = (e as Error).message ?? String(e);
-    if (!/No port selected|No device selected|cancel/i.test(m))
-      S.connError = cableApi() === 'usb'
-        ? `Could not open the cable: ${m}. Unplug the cable and plug it in again, and allow access when Android asks.`
-        : `Could not open the cable: ${m}. Close INPA or BMW Scanner if they are using the port.`;
-    render();
-  }
 }
 
 const ELM_LINE = { baudRate: 38400, dataBits: 8, parity: 'none', stopBits: 1 } as const;
@@ -256,13 +266,15 @@ function pickPaired(list: PairedDevice[]): Promise<PairedDevice | null> {
 }
 
 /** ELM327 adapter (Bluetooth LE, classic Bluetooth in the app, USB or paired serial port on a computer, or simulated). */
-async function connectElm(kind: 'ble' | 'classic' | 'serial' | 'sim') {
+async function connectElm(kind: 'ble' | 'classic' | 'serial' | 'sim' | 'simdeep') {
   S.connError = '';
   try {
     let ch: ByteChannel;
     if (kind === 'sim') {
       ch = new SimElmChannel(createE46({ drive: (simDrive = new DriveCycle(0)) }));
       await ch.open(ELM_LINE);
+    } else if (kind === 'simdeep') {
+      ch = new SimDeepObdAdapter(new SimChannel(createE46({ drive: (simDrive = new DriveCycle(0)) })));
     } else if (kind === 'ble') ch = await BleElmChannel.request();
     else if (kind === 'classic') {
       const dev = await pickPaired(await pairedAdapters());
@@ -274,6 +286,25 @@ async function connectElm(kind: 'ble' | 'classic' | 'serial' | 'sim') {
       ch = await WebSerialChannel.request();
       await ch.open(ELM_LINE);
     }
+    // ELM327 with the Deep OBD firmware (PIC18F25K80): it reaches the K-line itself, so the whole car is readable
+    log('info', 'Checking for the Deep OBD firmware…');
+    let deep = await DeepObdChannel.probe(ch, (t) => log('info', t));
+    if (!deep && kind === 'serial') {
+      await ch.reconfigure({ ...ELM_LINE, baudRate: 115200 });
+      deep = await DeepObdChannel.probe(ch, (t) => log('info', t));
+      if (!deep) await ch.reconfigure(ELM_LINE);
+    }
+    if (deep) {
+      log('info', `Deep OBD firmware ${versionText(deep.info.version)}: DS2 and OBD-II on the K-line, every module`);
+      const v = await deep.readVoltage().catch(() => undefined);
+      if (v) log('info', `Battery at the OBD socket: ${v.toFixed(1)} V`);
+      await startCarSession(deep, kind === 'simdeep' ? 'sim' : 'cable', true);
+      return;
+    }
+    // stock ELM327 firmware: clear the probe bytes from its input line
+    await ch.write(new TextEncoder().encode('\r'));
+    await ch.read(64, 300);
+    ch.discardInput();
     const traffic = (d: 'tx' | 'rx' | 'info', b: Uint8Array | string) => log(d, `${d === 'tx' ? '→' : d === 'rx' ? '←' : '·'} ${typeof b === 'string' ? b : toHex(b)}`);
     const onLink = (st: 'answer' | 'noanswer' | 'nocable') => {
       if (st === 'answer') link.lastAnswer = Date.now();
@@ -1024,12 +1055,13 @@ function renderSetup() {
       ),
       h('div', { class: 'start-card' },
         h('h2', {}, 'ELM327 adapter'),
-        h('p', {}, 'Engine only: standard OBD-II fault codes, clearing and live data. An ELM327 cannot reach the gearbox, ABS, airbag, cluster and the other E46 modules; those need the K+DCAN cable.'),
+        h('p', {}, 'A stock ELM327 reads the engine only (standard OBD-II codes, clearing, live data). An ELM327 with a PIC18F25K80 reflashed with the Deep OBD firmware reads every module, like the cable: the app detects it by itself. The E46 needs OBD pins 7 and 8 joined for the other modules.'),
         h('div', { class: 'row' },
           btClassicAvailable() ? h('button', { class: 'btn', onclick: () => connectElm('classic'), title: 'Most ELM327 v1.5 adapters: pair it in Android\'s Bluetooth settings first' }, 'Bluetooth (paired)') : null,
           bleAvailable() ? h('button', { class: 'btn', onclick: () => connectElm('ble'), title: 'Bluetooth LE adapters (Vgate iCar BLE, vLinker, iOS-compatible ELM327)' }, 'Bluetooth LE') : null,
           webSerialAvailable() ? h('button', { class: 'btn', onclick: () => connectElm('serial'), title: 'USB ELM327, or a classic Bluetooth adapter paired with this computer (it shows up as a serial port)' }, 'USB / serial port') : null,
           h('button', { class: 'btn ghost', onclick: () => connectElm('sim'), title: 'A simulated ELM327 on the simulated 325i' }, 'Simulated ELM327'),
+          h('button', { class: 'btn ghost', onclick: () => connectElm('simdeep'), title: 'A simulated ELM327 with the Deep OBD firmware: every module' }, 'Simulated Deep OBD'),
         ),
       ),
       h('div', { class: 'start-card' },

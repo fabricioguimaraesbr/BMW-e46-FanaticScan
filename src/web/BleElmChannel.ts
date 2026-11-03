@@ -11,6 +11,8 @@ import type { CableState } from './WebSerialChannel';
 /** Service / characteristic layouts used by BLE OBD adapters: [service, notify, write]. */
 const KNOWN: [string, string, string][] = [
   [numberToUUID(0xfff0), numberToUUID(0xfff1), numberToUUID(0xfff2)],
+  // Deep OBD BLE firmware (EdiabasLib BtLeGattSpp.cs): notify FFE1, write FFE2
+  [numberToUUID(0xffe0), numberToUUID(0xffe1), numberToUUID(0xffe2)],
   [numberToUUID(0xffe0), numberToUUID(0xffe1), numberToUUID(0xffe1)],
   [numberToUUID(0x18f0), numberToUUID(0x2af0), numberToUUID(0x2af1)],
   ['e7810a71-73ae-499d-8c15-faa9aef0c3f2', 'bef8d6c9-9c21-4c9e-b632-bd58c1009f9f', 'bef8d6c9-9c21-4c9e-b632-bd58c1009f9f'],

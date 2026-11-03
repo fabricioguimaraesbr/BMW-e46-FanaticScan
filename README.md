@@ -61,6 +61,13 @@ Adaptadores ELM327 (Bluetooth, Bluetooth LE, USB) só falam OBD-II: no E46 leem 
 
 Código: `src/core/native/elm327.ts` (comandos AT, mesma interface do ISO 9141 para o `Obd2`), `src/web/BleElmChannel.ts`, `src/web/BtClassicChannel.ts` + `android/.../BtSerialPlugin.java`, simulador `src/core/sim/elmSim.ts`.
 
+### ELM327 com firmware Deep OBD (todos os módulos)
+
+ELM327 com microcontrolador PIC18F25K80 regravado com o firmware de substituição do projeto Deep OBD / EdiabasLib (github.com/uholeschak/ediabaslib, GPLv3) passa a falar na linha K com qualquer baud e paridade: DS2 9600 8E1, ISO 9141 (OBD-II) e BMW-FAST. O app detecta sozinho, ao conectar pelo cartão **ELM327 adapter** (pede a versão do firmware com `82 F1 F1 FD FD`); com o firmware original do ELM327, cai no modo só motor. No E46 o adaptador precisa juntar os pinos 7 e 8 da OBD (ou usar um adaptador 7+8), como o cabo.
+- Primeira gravação do firmware: com programador PICkit 3/4 (abre o adaptador); depois as atualizações vão pelo app Deep OBD. Ou comprar já gravado.
+- Protocolo em `src/core/transport/DeepObdChannel.ts` (cabeçalho com baud/2, flags de paridade e sem eco, tempo entre bytes, tamanho, soma; pulso de 5 baud com resposta automática do key byte), reimplementado a partir do `EdCustomAdapterCommon.cs`. Simulador `src/core/sim/deepObdSim.ts`, testes `tests/deepobd.test.ts`.
+- Pelo Bluetooth a gravação no painel (Coding) fica bloqueada: só pelo cabo.
+
 ### Android (celular)
 
 O Chrome do Android não tem Web Serial, mas tem WebUSB. Nele o programa usa um driver próprio do chip FTDI (`src/web/WebUsbFtdiChannel.ts`, protocolo dos drivers abertos libftdi/ftdi_sio): o mesmo cabo K+DCAN ou do BMW Scanner, ligado ao celular por um adaptador OTG (USB-A fêmea → USB-C). A página precisa abrir por HTTPS (ou do disco). Como no celular não há atalho para juntar a pasta `modulos`, a tela inicial tem **Choose module files**: o usuário escolhe os próprios `.prg`/`.grp` uma vez e eles ficam só naquele navegador (IndexedDB). Sem arquivos, funciona em plug & play. iPhone e iPad não aceitam cabos USB-serial: lá só com adaptador sem fio e app nativo.
