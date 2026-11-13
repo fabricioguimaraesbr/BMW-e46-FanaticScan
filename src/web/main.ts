@@ -2,6 +2,7 @@ import '@fontsource/titillium-web/400.css';
 import '@fontsource/titillium-web/600.css';
 import '@fontsource/titillium-web/700.css';
 import '@fontsource/jetbrains-mono/400.css';
+import '@fontsource/jetbrains-mono/700.css';
 import { Availability, BLOCKED_CODE, DISTURBED, DiagSession, Dtc, Session, JobListEntry, ScanEntry, Value, isLiveGroup, jobStatus } from '../core/api/DiagSession';
 import { HybridSession } from '../core/api/HybridSession';
 import { EQUIPMENT_LABEL, EquipmentKey, isHiddenByEquipment } from '../core/api/equipment';
@@ -26,6 +27,7 @@ import { renderCooling } from './coolingPage';
 import { renderVehicle, resetVehicle } from './vehiclePage';
 import { renderChecks, resetChecks, stopChecks } from './checksPage';
 import { renderLibrary } from './libraryPage';
+import { renderTelemetry, resetTelemetry, stopTelemetry } from './telemetryPage';
 import { openTroubleshoot } from './troubleshoot';
 import { ShareState, approvalDialog, openRemoteDialog } from './remote';
 import type { RemoteSession } from '../core/remote/remote';
@@ -52,7 +54,7 @@ import { confirmDialog, download, h, nodes, stamp, store } from './dom';
 
 // ------------------------------------------------------------------ state
 /** Sections of the side menu. Module pages (faults, live, functions) show the module tabs on top. */
-type Page = 'overview' | 'vehicle' | 'faults' | 'live' | 'functions' | 'checks' | 'service' | 'coding' | 'cooling' | 'logger' | 'garage' | 'library' | 'log';
+type Page = 'telemetry' | 'overview' | 'vehicle' | 'faults' | 'live' | 'functions' | 'checks' | 'service' | 'coding' | 'cooling' | 'logger' | 'garage' | 'library' | 'log';
 const MODULE_PAGES: Page[] = ['faults', 'live', 'functions'];
 interface ModState {
   scan?: ScanEntry;
@@ -353,6 +355,7 @@ async function disconnect() {
   stopLive();
   stopLogger();
   resetLogger();
+  resetTelemetry();
   resetService();
   S.session?.abort();
   if (S.session instanceof NativeSession) S.session.iso.stopKeepAlive();
@@ -1107,7 +1110,7 @@ function statusOf(st: ModState | undefined): { cls: string; text: string } {
 /** Side menu, in sections: the car, its data, workshop tools, and the rest. */
 const SECTIONS: [string, [Page, string][]][] = [
   ['Car', [['overview', 'Overview'], ['vehicle', 'Vehicle'], ['faults', 'Faults']]],
-  ['Data', [['live', 'Live Data'], ['logger', 'Data Logger']]],
+  ['Data', [['telemetry', 'Telemetry'], ['live', 'Live Data'], ['logger', 'Data Logger']]],
   ['Workshop', [['checks', 'Guided checks'], ['service', 'Service'], ['functions', 'Tests & Functions'], ['coding', 'Coding'], ['cooling', 'Engine cooling']]],
   ['More', [['garage', 'Garage'], ['library', 'Library'], ['log', 'Log']]],
 ];
@@ -1141,6 +1144,7 @@ function go(p: Page) {
   if (p !== 'live') stopLive();
   if (p !== 'logger') stopLogger();
   if (p !== 'checks') stopChecks();
+  if (p !== 'telemetry') stopTelemetry();
   if (MODULE_PAGES.includes(p) && !S.selected) S.selected = foundModules()[0]?.group ?? null;
   S.page = p;
   renderRail();
@@ -1180,6 +1184,7 @@ function renderMain() {
   if (!main) return;
   const banner = renderHint() ?? renderRemoteBanner() ?? renderElmBanner();
   const put = (xs: (Node | null)[]) => main.replaceChildren(...nodes([banner, ...xs]));
+  if (S.page === 'telemetry') return put(renderTelemetry(ctx));
   if (S.page === 'overview') return put(renderOverview());
   if (S.page === 'service') return put(renderService(ctx));
   if (S.page === 'coding') return put(renderCoding(ctx));
