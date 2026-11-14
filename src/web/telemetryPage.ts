@@ -31,8 +31,8 @@ const SW = 270;
 
 interface Hist { t: number; v: Record<string, number | undefined> }
 interface Refs {
-  tachArc: SVGPathElement; tachNeedle: SVGLineElement; tachText: HTMLElement;
-  spdArc: SVGPathElement; spdNeedle: SVGLineElement; spdText: HTMLElement;
+  tachNeedle: SVGGElement; tachLayer: SVGSVGElement; tachText: HTMLElement;
+  spdNeedle: SVGGElement; spdText: HTMLElement;
   arcs: Record<'ect' | 'oil', { fill: SVGPathElement; value: HTMLElement; cell: HTMLElement }>;
   sel: Record<string, HTMLElement>; gear: HTMLElement; mode: HTMLElement; kml: HTMLElement; kmlLabel: HTMLElement; avg: HTMLElement;
   tiles: Map<string, { box: HTMLElement; value: HTMLElement }>;
@@ -87,35 +87,46 @@ function arc(cx: number, cy: number, r: number, a0: number, a1: number, ccw = fa
 }
 const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
 
+/** Analog dial (approved layout 26): metal bezel, recessed face, backlit amber marks and numbers, tapered needle, glass.
+ *  Built in layers (HTML + crisp SVG paths) so the marks stay smooth when the screen is scaled. */
 function dial(kind: 'tach' | 'speed') {
-  const max = kind === 'tach' ? RPM_MAX : SPEED_MAX;
-  const minor = kind === 'tach' ? 250 : 10;
-  const major = kind === 'tach' ? 1000 : 20;
-  const svg = sv('svg', { viewBox: '0 0 400 380', class: 'tm-dial', role: 'img', 'aria-label': kind === 'tach' ? 'Engine speed' : 'Vehicle speed' });
-  const fid = `tmglow-${kind}`;
-  svg.append(sv('defs', {}, sv('filter', { id: fid, x: '-30%', y: '-30%', width: '160%', height: '160%' },
-    sv('feGaussianBlur', { stdDeviation: 3, result: 'b' }), sv('feMerge', {}, sv('feMergeNode', { in: 'b' }), sv('feMergeNode', { in: 'SourceGraphic' })))));
-  svg.append(sv('circle', { cx: 200, cy: 200, r: 180, class: 'tm-face' }));
-  svg.append(sv('path', { d: arc(200, 200, 168, A0, A0 + SW), class: 'tm-track' }));
-  if (kind === 'tach') svg.append(sv('path', { d: arc(200, 200, 168, A0 + (SW * 6500) / RPM_MAX, A0 + SW), class: 'tm-red' }));
-  const valArc = sv('path', { d: arc(200, 200, 168, A0, A0 + 0.5), class: 'tm-valarc', filter: `url(#${fid})` }) as SVGPathElement;
-  svg.append(valArc);
+  const tach = kind === 'tach';
+  const max = tach ? RPM_MAX : SPEED_MAX;
+  const minor = tach ? 250 : 10;
+  const major = tach ? 1000 : 20;
+  const red = tach ? 6500 : undefined;
+  const seg = (a: number, r1: number, r2: number) => {
+    const o = pt(200, 200, r1, a), q = pt(200, 200, r2, a);
+    return `M${o[0].toFixed(2)} ${o[1].toFixed(2)}L${q[0].toFixed(2)} ${q[1].toFixed(2)}`;
+  };
+  let mi = '', ma = '', rt = '';
+  const nums: HTMLElement[] = [];
   for (let v = 0; v <= max; v += minor) {
-    const a = A0 + (SW * v) / max, big = v % major === 0;
-    const o = pt(200, 200, 160, a), q = pt(200, 200, big ? 140 : 150, a);
-    svg.append(sv('line', { x1: o[0].toFixed(1), y1: o[1].toFixed(1), x2: q[0].toFixed(1), y2: q[1].toFixed(1), class: `tm-tick ${big ? 'big' : ''} ${kind === 'tach' && v >= 6500 ? 'redline' : ''}`, filter: `url(#${fid})` }));
+    const a = A0 + (SW * v) / max, big = v % major === 0, mid = !big && v % (major / 2) === 0;
+    const isRed = red !== undefined && v >= red;
+    if (big || mid) { const d = seg(a, 176, big ? 152 : 160); if (isRed) rt += d; else ma += d; }
+    else mi += seg(a, 176, 166);
     if (big) {
-      const l = pt(200, 200, 116, a);
-      svg.append(sv('text', { x: l[0].toFixed(1), y: l[1].toFixed(1), class: `tm-num ${kind}`, filter: `url(#${fid})` }, String(kind === 'tach' ? v / 1000 : v)));
+      const l = pt(200, 200, 128, a);
+      nums.push(h('span', { class: `tm-dnum ${kind} ${isRed ? 'red' : ''}`, style: `left:${(10 + l[0] * 0.85).toFixed(1)}px;top:${(1 + l[1] * 0.85).toFixed(1)}px` }, String(tach ? v / 1000 : v)));
     }
   }
-  // the readout is HTML over the dial (an SVG filter on text can hide it in some WebViews)
-  const text = h('span', { class: 'tm-digital' }, '—');
-  const needle = sv('line', { x1: 200, y1: 200, x2: 338, y2: 200, class: 'tm-needle' }) as SVGLineElement;
+  const marks = sv('svg', { viewBox: '0 0 400 400', class: 'tm-dlayer tm-marks', 'aria-hidden': 'true' });
+  if (red !== undefined) marks.append(sv('path', { d: arc(200, 200, 171, A0 + (SW * red) / max, A0 + SW), class: 'tm-redzone' }));
+  marks.append(sv('path', { d: mi, class: 'tm-mk minor' }), sv('path', { d: ma, class: 'tm-mk major' }), sv('path', { d: rt, class: 'tm-mk major red' }));
+  const needle = sv('g', { class: 'tm-needle' },
+    sv('polygon', { points: '166,196.6 200,192.2 346,199.4 346,200.6 200,207.8 166,203.4', class: 'tm-nbody' }),
+    sv('polygon', { points: '166,196.6 200,192.2 346,199.4 346,200 200,200 166,200', class: 'tm-nlight' })) as SVGGElement;
   needle.style.transform = `rotate(${A0}deg)`;
-  svg.append(needle, sv('circle', { cx: 200, cy: 200, r: 16, class: 'tm-hub' }));
-  const wrap = h('div', { class: 'tm-dialwrap' }, svg, h('div', { class: 'tm-readout' }, text, h('span', { class: 'tm-unit' }, kind === 'tach' ? 'RPM' : 'KM/H')));
-  return { svg: wrap, valArc, needle, text };
+  const nlayer = sv('svg', { viewBox: '0 0 400 400', class: 'tm-dlayer tm-nlayer', 'aria-hidden': 'true' }, needle) as SVGSVGElement;
+  const text = h('span', { class: 'tm-digital' }, '—');
+  const wrap = h('div', { class: 'tm-dialwrap', role: 'img', 'aria-label': tach ? 'Engine speed' : 'Vehicle speed' },
+    h('div', { class: 'tm-bezel' }), h('div', { class: 'tm-gap' }), h('div', { class: 'tm-dface' }),
+    marks, nums,
+    h('span', { class: 'tm-legend' }, tach ? '1/min ×1000' : 'km/h'),
+    h('div', { class: 'tm-readout' }, text, h('span', { class: 'tm-unit' }, tach ? 'RPM' : 'KM/H')),
+    nlayer, h('div', { class: 'tm-hubcap' }), h('div', { class: 'tm-glass' }));
+  return { svg: wrap, needle, nlayer, text };
 }
 
 /** Coolant (left) and oil (right) arcs around the gear display. */
@@ -277,7 +288,7 @@ function toggleRec(ctx: PageCtx) {
 function rpmGlow(rpm: number) {
   const e = Math.pow(clamp01(rpm / RPM_MAX), 2.2);
   const a = 0.12 + 0.88 * e;
-  return `drop-shadow(0 0 ${(1 + 9 * e).toFixed(1)}px rgba(255,77,26,${a.toFixed(2)})) drop-shadow(0 0 ${(2 + 26 * e).toFixed(1)}px rgba(255,77,26,${(a * 0.8).toFixed(2)}))`;
+  return `drop-shadow(0 0 ${(1 + 9 * e).toFixed(1)}px rgba(255,70,0,${a.toFixed(2)})) drop-shadow(0 0 ${(2 + 26 * e).toFixed(1)}px rgba(255,70,0,${(a * 0.8).toFixed(2)})) drop-shadow(0 2px 3px rgba(0,0,0,0.8))`;
 }
 function setTile(t: { box: HTMLElement; value: HTMLElement }, text: string, color: string, bad: boolean, dim = false) {
   t.value.firstChild!.textContent = text;
@@ -313,11 +324,9 @@ function update() {
   // dials
   const rpm = v.rpm ?? 0, spd = v.speed ?? 0;
   const ra = A0 + SW * clamp01(rpm / RPM_MAX), sa = A0 + SW * clamp01(spd / SPEED_MAX);
-  r.tachArc.setAttribute('d', arc(200, 200, 168, A0, ra));
   r.tachNeedle.style.transform = `rotate(${ra.toFixed(1)}deg)`;
-  r.tachNeedle.style.filter = rpmGlow(rpm);
+  r.tachLayer.style.filter = rpmGlow(rpm);
   r.tachText.textContent = v.rpm === undefined ? '—' : String(Math.round(v.rpm / 10) * 10);
-  r.spdArc.setAttribute('d', arc(200, 200, 168, A0, sa));
   r.spdNeedle.style.transform = `rotate(${sa.toFixed(1)}deg)`;
   r.spdText.textContent = v.speed === undefined ? '—' : String(Math.round(v.speed));
   // coolant and oil arcs
@@ -440,7 +449,7 @@ export function renderTelemetry(ctx: PageCtx): (Node | null)[] {
   T.refs = { tiles: new Map(), charts: new Map(), sel: {} } as unknown as Refs;
   const refs = T.refs;
   const tach = dial('tach'), spd = dial('speed');
-  Object.assign(refs, { tachArc: tach.valArc, tachNeedle: tach.needle, tachText: tach.text, spdArc: spd.valArc, spdNeedle: spd.needle, spdText: spd.text });
+  Object.assign(refs, { tachNeedle: tach.needle, tachLayer: tach.nlayer, tachText: tach.text, spdNeedle: spd.needle, spdText: spd.text });
   const ect = tempArc('ect'), oil = tempArc('oil');
   refs.arcs = { ect, oil };
   const sel = h('div', { class: 'tm-selrow', 'aria-label': 'Selector position' }, (['P', 'R', 'N', 'D', 'S'] as const).map((k) => (refs.sel[k] = h('span', { class: 'tm-sel' }, k))));
