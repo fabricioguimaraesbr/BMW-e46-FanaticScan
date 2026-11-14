@@ -18,10 +18,36 @@ export const ENGINE_VARIANT = 'native:12';
 const LIVE_JOB = 'OBD_LIVE';
 const INFO_JOB = 'OBD_INFO';
 
-/** PIDs read on every refresh; the others rotate one per refresh. */
+/** Display order of the live values (the main ones first). */
 const FAST_PIDS = [0x0c, 0x05, 0x0f, 0x0d, 0x04, 0x10, 0x0e, 0x06, 0x07, 0x11];
-const DIAL_PIDS = [0x0c, 0x05, 0x0f, 0x0d];
 const INFO_PIDS = [0x01, 0x03, 0x1c, 0x1f, 0x21];
+/**
+ * How often each PID is read, in refreshes (OBD-II on an E46 answers one PID per request, ~60-150 ms each):
+ * engine speed and road speed every refresh, pedal and air mass every other one, temperatures and trims about
+ * every 6, the rest about every 20. Slow-moving values thus cost little and the needles stay smooth.
+ */
+const PID_PERIOD: Record<number, number> = {
+  0x0c: 1, 0x0d: 1,
+  0x11: 2, 0x10: 2,
+  0x05: 6, 0x0f: 6, 0x06: 6, 0x08: 6, 0x04: 6, 0x0e: 6, 0x07: 8, 0x09: 8, 0x42: 8,
+};
+const SLOW_PERIOD = 20;
+/** Requests per refresh besides the every-refresh PIDs. */
+const EXTRA_PER_REFRESH = 2;
+
+/** Picks the PIDs of one refresh: the every-refresh ones plus the most overdue others. Exported for tests. */
+export function schedulePids(pids: number[], last: Map<number, number>, cycle: number, extra = EXTRA_PER_REFRESH): number[] {
+  const period = (p: number) => PID_PERIOD[p] ?? SLOW_PERIOD;
+  const always = pids.filter((p) => period(p) === 1);
+  const due = pids
+    .filter((p) => period(p) > 1)
+    .map((p) => ({ p, late: last.has(p) ? (cycle - last.get(p)!) / period(p) : Infinity }))
+    .filter((x) => x.late >= 1)
+    .sort((a, b) => b.late - a.late || period(a.p) - period(b.p))
+    .slice(0, extra)
+    .map((x) => x.p);
+  return [...always, ...due];
+}
 
 export interface NativeOptions {
   channel: ByteChannel;
@@ -68,7 +94,8 @@ export class NativeSession implements Session {
   safetyMode: SafetyMode = 'read';
   readonly iso: ObdTransport;
   readonly obd: Obd2;
-  private rotate = 0;
+  private cycle = 0;
+  private lastRead = new Map<number, number>();
   private cache = new Map<number, number | string>();
   private queue: Promise<unknown> = Promise.resolve();
 
@@ -210,15 +237,12 @@ export class NativeSession implements Session {
       let list: number[];
       if (job === INFO_JOB) list = INFO_PIDS.filter((p) => p === 0x01 || sup(p));
       else {
-        // dials every cycle, everything else round-robin (ISO 9141 manages ~5-8 values per second)
-        const dials = DIAL_PIDS.filter(sup);
-        const rest = [...FAST_PIDS.filter((p) => !dials.includes(p)), ...[...this.obd.supported].filter((p) => !FAST_PIDS.includes(p)).sort((a, b) => a - b)].filter(
-          (p) => sup(p) && !INFO_PIDS.includes(p),
-        );
-        list = [...dials];
-        const firstPass = rest.filter((p) => !this.cache.has(p));
-        if (firstPass.length) list.push(...firstPass);
-        else for (let k = 0; k < Math.min(3, rest.length); k++) list.push(rest[this.rotate++ % rest.length]);
+        const all = [...new Set([...FAST_PIDS, ...[...this.obd.supported].sort((a, b) => a - b)])].filter((p) => sup(p) && !INFO_PIDS.includes(p));
+        // first refresh: everything once, so every value shows up; then by priority
+        const firstPass = all.filter((p) => !this.cache.has(p) && !this.lastRead.has(p));
+        const c = this.cycle++;
+        list = firstPass.length ? firstPass : schedulePids(all, this.lastRead, c);
+        for (const p of list) this.lastRead.set(p, c);
       }
       const values: Value[] = [];
       for (const p of list) {

@@ -15,6 +15,10 @@ export class SimElmChannel extends QueuedChannel {
   private connected = false;
   /** ms before an answer, like a Bluetooth adapter on ISO 9141 */
   answerDelay = 40;
+  /** extra wait of a real adapter for other ECUs when the request does not say how many answers to expect */
+  waitOthersMs = 0;
+  /** false: an old clone that does not take the number of answers ("010C1" → "?") */
+  acceptsCount = true;
   state: 'connected' | 'unplugged' | 'reconnecting' = 'connected';
   onState: ((s: 'connected' | 'unplugged' | 'reconnecting') => void) | null = null;
 
@@ -58,7 +62,14 @@ export class SimElmChannel extends QueuedChannel {
       const cmd = this.line.trim().toUpperCase().replace(/\s+/g, '');
       this.line = '';
       await sleep(this.answerDelay);
-      const reply = this.answer(cmd);
+      let body = cmd;
+      let counted = false;
+      if (!cmd.startsWith('AT') && /^([0-9A-F]{2})+[1-9]$/.test(cmd)) {
+        body = cmd.slice(0, -1);
+        counted = true;
+      }
+      const reply = counted && !this.acceptsCount ? '?' : this.answer(body);
+      if (!counted && !cmd.startsWith('AT') && this.waitOthersMs) await sleep(this.waitOthersMs);
       this.send(`${this.echo ? cmd + '\r' : ''}${reply}\r\r>`);
     }
   }

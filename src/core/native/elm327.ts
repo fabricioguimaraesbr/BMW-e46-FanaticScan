@@ -46,6 +46,11 @@ export class Elm327 implements ObdTransport {
   version = '';
   /** protocol the adapter found ("ISO 9141-2", …), from ATDP */
   protocol = '';
+  /**
+   * The adapter takes the expected number of answers after a request ("010C1"): it then answers as soon as the
+   * engine has, instead of waiting its timeout for other ECUs. Probed at init; clones without it answer "?".
+   */
+  responseCount = false;
 
   constructor(
     private ch: ByteChannel,
@@ -111,13 +116,21 @@ export class Elm327 implements ObdTransport {
         this.opts.onLink?.('nocable');
         return false;
       }
-      for (const c of ['ATE0', 'ATL0', 'ATS1', 'ATH0', 'ATAT1']) await this.cmd(c, 1500);
+      // no echo, no line feeds, no spaces, no headers (fewer bytes over Bluetooth / Wi-Fi);
+      // aggressive adaptive timing (clones that do not know AT2 answer "?" and keep AT1, the default)
+      for (const c of ['ATE0', 'ATL0', 'ATS0', 'ATH0', 'ATAT1', 'ATAT2']) await this.cmd(c, 1500);
       this.version = (await this.cmd('ATI', 1500)).split(/[\r\n]/).find((l) => l.trim()) ?? '';
       // automatic protocol; the first request makes the adapter wake the engine (5-baud on an E46: several seconds)
       await this.cmd('ATSP0', 1500);
       const first = await this.cmd('0100', 15000);
       const ok = parseElmAnswer(first).some((m) => m.data[0] === 0x41 && m.data[1] === 0x00);
       this.protocol = ok ? (await this.cmd('ATDP', 1500)).replace(/^AUTO,\s*/i, '') : '';
+      this.responseCount = false;
+      if (ok) {
+        const probe = await this.cmd('010C1', 3000);
+        this.responseCount = parseElmAnswer(probe).some((m) => m.data[0] === 0x41 && m.data[1] === 0x0c);
+        this.info(this.responseCount ? 'ELM327: fast mode (one answer per request)' : 'ELM327: fast mode not supported by this adapter');
+      }
       this.info(ok ? `ELM327: engine answered (${this.protocol})` : `ELM327: engine did not answer (${first.replace(/[\r\n]+/g, ' ') || 'no reply'})`);
       this.opts.onLink?.(ok ? 'answer' : 'noanswer');
       this.ready = ok;
@@ -130,7 +143,10 @@ export class Elm327 implements ObdTransport {
       let text: string;
       try {
         // mode 04 can take a while on some engines
-        text = await this.cmd(data.map((b) => b.toString(16).padStart(2, '0')).join('').toUpperCase(), data[0] === 0x04 ? 5000 : 3000);
+        let line = data.map((b) => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+        // single-PID live data: the E46 has one engine, so one answer is all there is
+        if (this.responseCount && data[0] === 0x01 && data.length === 2) line += '1';
+        text = await this.cmd(line, data[0] === 0x04 ? 5000 : 3000);
       } catch {
         this.ready = false;
         this.opts.onLink?.('nocable');

@@ -2,6 +2,7 @@
 
 import type { EcuFileProvider } from '../core/ediabas/Ediabas';
 import { PrgFile } from '../core/prg/PrgFile';
+import { isZip, unzip } from '../core/util/unzip';
 
 const DB = 'e46diag';
 const STORE = 'ecu';
@@ -61,14 +62,30 @@ export class BrowserFileProvider implements EcuFileProvider {
     return f;
   }
 
-  /** Adds files from an <input webkitdirectory> selection; returns how many SGBDs were accepted. */
+  /**
+   * Adds chosen files: .prg / .grp files, or .zip files holding them (any folder inside the zip).
+   * Returns how many SGBDs were accepted.
+   */
   async addFiles(list: FileList | File[]): Promise<number> {
-    let n = 0;
-    const store: [string, Uint8Array][] = [];
+    const items: { name: string; data: Uint8Array }[] = [];
     for (const f of Array.from(list)) {
       const name = f.name.toLowerCase();
-      if (!/\.(prg|grp)$/.test(name)) continue;
-      const data = new Uint8Array(await f.arrayBuffer());
+      if (/\.(prg|grp)$/.test(name)) {
+        items.push({ name, data: new Uint8Array(await f.arrayBuffer()) });
+        continue;
+      }
+      // some pickers give no extension or a generic name: look at the bytes
+      const bytes = new Uint8Array(await f.arrayBuffer());
+      if (!isZip(bytes)) continue;
+      try {
+        for (const e of await unzip(bytes, (n) => /\.(prg|grp)$/i.test(n))) items.push({ name: e.name.toLowerCase(), data: e.data });
+      } catch {
+        /* damaged zip: skip it */
+      }
+    }
+    let n = 0;
+    const store: [string, Uint8Array][] = [];
+    for (const { name, data } of items) {
       try {
         new PrgFile(name, data); // validate
       } catch {

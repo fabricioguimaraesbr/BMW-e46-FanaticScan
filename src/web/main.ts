@@ -1023,18 +1023,24 @@ function openReport() {
 function phoneModuleFiles() {
   if (files.embedded)
     return h('p', { class: 'start-note' }, `${files.count} module files built into this page.`);
-  const input = h('input', { type: 'file', multiple: true, accept: '.prg,.grp,.PRG,.GRP', style: 'display:none' }) as HTMLInputElement;
+  // no accept filter: Android does not know .prg / .grp and some pickers (car head units) then show nothing;
+  // a single .zip with every module file works where the picker takes one file at a time
+  const input = h('input', { type: 'file', multiple: true, style: 'display:none' }) as HTMLInputElement;
+  const busy = h('span', {});
   input.onchange = async () => {
     if (!input.files?.length) return;
+    busy.textContent = 'Loading module files… ';
     const n = await files.addFiles(input.files);
-    S.connError = n ? '' : 'None of the chosen files is a module file (.prg / .grp).';
+    input.value = '';
+    S.connError = n ? '' : 'None of the chosen files is a module file (.prg / .grp) or a .zip with them.';
     render();
   };
   return h('div', { class: 'start-note' },
     files.count
       ? h('span', {}, `${files.count} module files on this phone. `)
-      : h('span', {}, 'No module files on this phone: plug & play mode (engine over OBD-II, every module identified). To read every module, choose your .prg and .grp files once; they stay on this phone. '),
+      : h('span', {}, 'No module files on this phone: plug & play mode (engine over OBD-II, every module identified). To read every module, choose your .prg and .grp files once, or a single .zip with all of them; they stay on this phone. '),
     input,
+    busy,
     h('button', { class: 'btn', onclick: () => input.click() }, files.count ? 'Add files' : 'Choose module files'),
     files.count ? h('button', { class: 'btn', onclick: async () => { await files.clear(); render(); } }, 'Remove') : null,
   );
