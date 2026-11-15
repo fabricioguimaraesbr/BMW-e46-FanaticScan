@@ -191,12 +191,15 @@ export class FuelEstimator {
   fuelL = 0;
   /** litres per hour, last value */
   lph?: number;
+  /** lowest pedal value seen (rest position) */
+  pedalRest?: number;
   reset() {
     this.ema = undefined;
     this.lastT = 0;
     this.distanceKm = 0;
     this.fuelL = 0;
     this.lph = undefined;
+    this.pedalRest = undefined;
   }
   /** t in ms. Returns km/l now (undefined when stopped or unknown). */
   update(t: number, s: Snapshot): number | undefined {
@@ -204,8 +207,12 @@ export class FuelEstimator {
     if (maf === undefined) return undefined;
     const trim = [stft1, stft2].filter((x): x is number => x !== undefined);
     const corr = trim.length ? 1 + trim.reduce((a, b) => a + b, 0) / trim.length / 100 : 1;
-    // overrun fuel cut: no injection with the pedal released at speed
-    const cut = (ti !== undefined && ti < 0.3 && (rpm ?? 0) > 1100) || ((s.v.pedal ?? 1) < 0.5 && (rpm ?? 0) > 1500 && (speed ?? 0) > 20 && ti === undefined);
+    // overrun fuel cut: no injection with the pedal released at speed. The pedal's rest value is learned (an
+    // OBD-II or raw reading can sit near 10 % with the foot off), so "released" is relative to the lowest seen.
+    const pedal = s.v.pedal;
+    if (pedal !== undefined && pedal <= 20 && (this.pedalRest === undefined || pedal < this.pedalRest)) this.pedalRest = pedal;
+    const released = pedal !== undefined && pedal - (this.pedalRest ?? 0) <= 1.5;
+    const cut = (ti !== undefined && ti < 0.3 && (rpm ?? 0) > 1100) || (ti === undefined && released && (rpm ?? 0) > 1500 && (speed ?? 0) > 20);
     const gps = cut ? 0 : (maf / 14.7) * corr;
     const lph = (gps * 3600) / 745;
     this.lph = lph;

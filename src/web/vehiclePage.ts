@@ -3,6 +3,7 @@
 
 import type { Value } from '../core/api/DiagSession';
 import { FactoryOrder, IdentityEntry, cleanVin, compareIdentity, fmtKm, paintName, parseFa, saText, shortVin } from '../core/api/vehicle';
+import { DME_FAMILIES } from '../core/api/carid';
 import type { PageCtx } from './ctx';
 import { h } from './dom';
 
@@ -102,6 +103,25 @@ function tile(label: string, value: string, sub = '') {
   return h('div', { class: 'vh-tile' }, h('span', {}, label), h('b', {}, value || '—'), sub ? h('small', {}, sub) : null);
 }
 
+/** What the app detected (engine DME family, engine, gearbox) and how; the DME families of the E46. */
+function detected(ctx: PageCtx) {
+  if (!ctx.session()) return null;
+  const c = ctx.carId();
+  const SUP = { full: 'FULL', partial: 'PARTIAL', obd: 'OBD-II ONLY' } as const;
+  return h('section', { class: 'panel-sec vh-detect' },
+    h('div', { class: 'sec-head' }, h('h2', {}, 'Detected car'), h('span', {}, 'decides references, definition files and ECO checks')),
+    h('div', { class: 'vh vh-tiles' },
+      tile('Model', c.model ? `E46 ${c.model}` : '', c.model ? 'from the engine' : ''),
+      tile('Engine', c.engine ?? '', c.how.engine),
+      tile('Engine DME', c.family === 'unknown' ? '' : c.family, c.how.family),
+      tile('Gearbox', c.gearbox === 'unknown' ? '' : c.gearbox === 'SMG' ? 'SMG' : c.gearbox[0].toUpperCase() + c.gearbox.slice(1), c.how.gearbox)),
+    h('div', { class: 'vh-fam' },
+      h('div', { class: 'vh-fam-row head' }, h('span', {}, 'DME'), h('span', {}, 'Engine'), h('span', {}, 'Models'), h('span', {}, 'In this app')),
+      DME_FAMILIES.map((f) => h('div', { class: `vh-fam-row ${f.family === c.family ? 'me' : ''}`, title: f.note },
+        h('b', {}, f.family), h('span', {}, f.engines), h('span', {}, f.models), h('span', { class: `eco-badge ${f.support === 'full' ? 'ok' : f.support === 'partial' ? 'watch' : ''}` }, SUP[f.support])))),
+    h('p', { class: 'refnote' }, 'Dates and markets vary, so the DME\'s own answer decides, not the model year. Families marked OBD-II only work fully once their module file is in the modulos folder.'));
+}
+
 export function renderVehicle(ctx: PageCtx): (Node | null)[] {
   const s = ctx.session();
   if (V.owner && V.owner !== s) resetVehicle();
@@ -109,7 +129,7 @@ export function renderVehicle(ctx: PageCtx): (Node | null)[] {
     h('div', { class: 'toolbar mh-tools' }, h('button', { class: 'btn', disabled: V.loading || ctx.busy() || ctx.scanning() || !s, onclick: () => readAll(ctx) }, V.readAt ? 'Read again' : 'Read')));
   if (!V.readAt && !V.loading && s && !ctx.scanning() && !ctx.busy() && ctx.found().length) setTimeout(() => { if (!V.readAt && !V.loading && document.querySelector('.vh')) void readAll(ctx); }, 0);
   if (V.loading || !V.readAt)
-    return [head, h('div', { class: 'vh empty' }, h('strong', {}, ctx.scanning() ? 'Waiting for the scan to finish…' : 'Reading the car'), h('span', { id: 'vh-step' }, V.step || 'Factory order, VIN and odometer, from every module that keeps them.'))];
+    return [head, detected(ctx), h('div', { class: 'vh empty' }, h('strong', {}, ctx.scanning() ? 'Waiting for the scan to finish…' : 'Reading the car'), h('span', { id: 'vh-step' }, V.step || 'Factory order, VIN and odometer, from every module that keeps them.'))];
 
   const fa = V.fa;
   const ike = V.ids.find((e) => e.module === 'IKE');
@@ -120,6 +140,7 @@ export function renderVehicle(ctx: PageCtx): (Node | null)[] {
   const worst = findings.some((f) => f.level === 'warn') ? 'warn' : 'ok';
   return [
     head,
+    detected(ctx),
     h('section', { class: 'vh vh-tiles' },
       tile('Built', fa?.built ? `${MONTHS[fa.built.month - 1]} ${fa.built.year}` : '', fa?.built ? 'from the factory order' : ''),
       tile('Type key', fa?.typeKey ?? '', fa?.series ? `${fa.series} series` : ''),

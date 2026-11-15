@@ -28,6 +28,8 @@ import { renderVehicle, resetVehicle } from './vehiclePage';
 import { renderChecks, resetChecks, stopChecks } from './checksPage';
 import { renderLibrary } from './libraryPage';
 import { renderTelemetry, resetTelemetry, stopTelemetry } from './telemetryPage';
+import { renderEco, resetEco, stopEco } from './ecoPage';
+import { carLine, identifyCar } from '../core/api/carid';
 import { openTroubleshoot } from './troubleshoot';
 import { ShareState, approvalDialog, openRemoteDialog } from './remote';
 import type { RemoteSession } from '../core/remote/remote';
@@ -54,7 +56,7 @@ import { confirmDialog, download, h, nodes, stamp, store } from './dom';
 
 // ------------------------------------------------------------------ state
 /** Sections of the side menu. Module pages (faults, live, functions) show the module tabs on top. */
-type Page = 'telemetry' | 'overview' | 'vehicle' | 'faults' | 'live' | 'functions' | 'checks' | 'service' | 'coding' | 'cooling' | 'logger' | 'garage' | 'library' | 'log';
+type Page = 'telemetry' | 'eco' | 'overview' | 'vehicle' | 'faults' | 'live' | 'functions' | 'checks' | 'service' | 'coding' | 'cooling' | 'logger' | 'garage' | 'library' | 'log';
 const MODULE_PAGES: Page[] = ['faults', 'live', 'functions'];
 interface ModState {
   scan?: ScanEntry;
@@ -356,6 +358,7 @@ async function disconnect() {
   stopLogger();
   resetLogger();
   resetTelemetry();
+  resetEco();
   resetService();
   S.session?.abort();
   if (S.session instanceof NativeSession) S.session.iso.stopKeepAlive();
@@ -1113,36 +1116,85 @@ function statusOf(st: ModState | undefined): { cls: string; text: string } {
   return st.dtcs.length ? { cls: 'fault', text: `${st.dtcs.length} ${st.dtcs.length === 1 ? 'fault' : 'faults'}` } : { cls: 'ok', text: 'OK' };
 }
 
-/** Side menu, in sections: the car, its data, workshop tools, and the rest. */
-const SECTIONS: [string, [Page, string][]][] = [
-  ['Car', [['overview', 'Overview'], ['vehicle', 'Vehicle'], ['faults', 'Faults']]],
-  ['Data', [['telemetry', 'Telemetry'], ['live', 'Live Data'], ['logger', 'Data Logger']]],
-  ['Workshop', [['checks', 'Guided checks'], ['service', 'Service'], ['functions', 'Tests & Functions'], ['coding', 'Coding'], ['cooling', 'Engine cooling']]],
-  ['More', [['garage', 'Garage'], ['library', 'Library'], ['log', 'Log']]],
+/** Side menu (approved layout "28 · Grouped sidebar", 15/11/2026): coloured groups with icons, a screen search
+ * and the detected car at the bottom. Coding groups the screens that write to the car (with backup). */
+interface NavItem { page?: Page; action?: () => void; label: string; icon: string; badge?: 'new'; lock?: boolean; keys?: string }
+interface NavGroup { id: string; title: string; color: string; note?: string; items: NavItem[] }
+const ICONS: Record<string, string> = {
+  home: 'M3 11l9-8 9 8M5 10v10h14V10', id: 'M4 5h16v14H4zM8 9h8M8 13h5', alert: 'M12 3l10 18H2zM12 10v5M12 18h.01',
+  road: 'M4 16a8 8 0 1 1 16 0M12 16l4-5', eco: 'M5 19c0-8 6-14 15-14c0 9-6 15-14 15M5 19l8-8', live: 'M3 12h4l3-8 4 16 3-8h4',
+  rec: 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6', check: 'M9 6h11M9 12h11M9 18h11M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2',
+  wrench: 'M15 4a5 5 0 0 0-1 6l-9 9 2 2 9-9a5 5 0 0 0 6-1l-3-1-1-3z', zap: 'M13 2L4 14h7l-1 8 9-12h-7z', needle: 'M4 18a8 8 0 0 1 16 0M12 18l-3-6',
+  thermo: 'M12 3a2 2 0 0 0-2 2v9a4 4 0 1 0 4 0V5a2 2 0 0 0-2-2zM12 10v6', garage: 'M3 7h6l2 2h10v10H3z',
+  book: 'M4 5h6a2 2 0 0 1 2 2v13a2 2 0 0 0-2-2H4zM20 5h-6a2 2 0 0 0-2 2v13a2 2 0 0 1 2-2h6z',
+  remote: 'M8 11a3 3 0 1 0 0-6a3 3 0 1 0 0 6M16 11a3 3 0 1 0 0-6a3 3 0 1 0 0 6M2 20c0-3 3-5 6-5s6 2 6 5M14 15c3 0 8 1 8 5',
+  log: 'M4 5h16v14H4zM7 10l3 2-3 2M12 15h5', search: 'M11 4a7 7 0 1 0 0 14a7 7 0 1 0 0-14M21 21l-5-5', lock: 'M6 11h12v9H6zM8 11V8a4 4 0 0 1 8 0v3',
+};
+const NAV: NavGroup[] = [
+  { id: 'car', title: 'Car', color: '#4290f6', items: [{ page: 'overview', label: 'Overview', icon: 'home', keys: 'modules battery mileage' }, { page: 'vehicle', label: 'Vehicle', icon: 'id', keys: 'vin dme engine gearbox model options paint' }, { page: 'faults', label: 'Faults', icon: 'alert', keys: 'errors dtc codes clear' }] },
+  { id: 'road', title: 'On the road', color: '#ffa033', items: [{ page: 'telemetry', label: 'Telemetry', icon: 'road', keys: 'dash head unit gauges cluster' }, { page: 'eco', label: 'ECO', icon: 'eco', badge: 'new', keys: 'fuel economy consumption km/l cut' }] },
+  { id: 'data', title: 'Data', color: '#2fd3c0', items: [{ page: 'live', label: 'Live Data', icon: 'live', keys: 'values sensors' }, { page: 'logger', label: 'Data Logger', icon: 'rec', keys: 'record csv log' }] },
+  { id: 'shop', title: 'Workshop', color: '#b36bff', items: [{ page: 'checks', label: 'Guided checks', icon: 'check', keys: 'thermostat vanos o2 lambda misfire' }, { page: 'service', label: 'Service', icon: 'wrench', keys: 'oil inspection reset' }, { page: 'functions', label: 'Tests & Functions', icon: 'zap', keys: 'actuator jobs' }] },
+  { id: 'coding', title: 'Coding', color: '#e22619', note: 'writes, with backup', items: [{ page: 'coding', label: 'Gauge curve', icon: 'needle', lock: true, keys: 'cluster temperature needle buffer kombi' }, { page: 'cooling', label: 'Engine cooling', icon: 'thermo', lock: true, keys: 'thermostat map dme calibration' }] },
+  { id: 'more', title: 'More', color: '#9aa1aa', items: [{ page: 'garage', label: 'Garage', icon: 'garage', keys: 'saved cars reports' }, { page: 'library', label: 'Library', icon: 'book', keys: 'guides diagrams help' }, { action: () => openRemote(), label: 'Remote session', icon: 'remote', keys: 'share friend' }, { page: 'log', label: 'Log', icon: 'log', keys: 'messages bug' }] },
 ];
+const SVGNS = 'http://www.w3.org/2000/svg';
+function icon(name: string, size = 17) {
+  const svg = document.createElementNS(SVGNS, 'svg');
+  for (const [k, v] of Object.entries({ viewBox: '0 0 24 24', width: size, height: size, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.8, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' })) svg.setAttribute(k, String(v));
+  const path = document.createElementNS(SVGNS, 'path');
+  path.setAttribute('d', ICONS[name] ?? '');
+  svg.append(path);
+  return svg;
+}
 const foundModules = () => ALL_E46_MODULES.filter((m) => S.mods.get(m.group)?.scan?.variant);
+function carId() {
+  const dme = S.mods.get('d_0012')?.scan, egs = S.mods.get('d_0032')?.scan;
+  return identifyCar({ dmeVariant: dme?.variant, dmeIdent: dme?.ident, egsVariant: egs?.variant, egsScanned: !!egs && !S.elm });
+}
+let navQuery = '';
 
-/** Side menu: sections of the app, safety state at the bottom. */
+/** Side menu: groups of screens, the car and the safety state at the bottom. */
 function renderRail() {
   const rail = document.querySelector('.rail');
   if (!rail) return;
   const faults = foundModules().reduce((n, m) => n + (S.mods.get(m.group)?.dtcs?.length ?? 0), 0);
   const service = S.session?.safetyMode === 'service';
+  const q = navQuery.trim().toLowerCase();
+  const hit = (it: NavItem) => !q || `${it.label} ${it.keys ?? ''}`.toLowerCase().includes(q);
+  const search = h('label', { class: 'nav-search' }, icon('search', 15), h('span', { class: 'sr' }, 'Search screens'),
+    h('input', { type: 'search', placeholder: 'Search screens', value: navQuery, oninput: (e: Event) => { navQuery = (e.target as HTMLInputElement).value; renderRail(); (document.querySelector('.nav-search input') as HTMLInputElement | null)?.focus(); },
+      onkeydown: (e: KeyboardEvent) => { if (e.key === 'Enter') { const first = NAV.flatMap((g) => g.items).find(hit); if (first) { navQuery = ''; if (first.page) go(first.page); else first.action?.(); } } } }));
+  const car = S.session ? carId() : null;
+  const carCard = car
+    ? h('button', { class: 'nav-car', onclick: () => go('vehicle'), title: 'Vehicle: what was detected and how' },
+        h('b', {}, h('span', { class: 'led ok' }), `E46 ${car.model ?? ''}`.trim()),
+        h('small', {}, carLine(car) || carSummary()))
+    : null;
   rail.replaceChildren(...nodes([
-    ...SECTIONS.flatMap(([title, pages]) => [
-      h('div', { class: 'rail-sep' }, title),
-      ...pages.map(([p, label]) =>
-        h('button', { class: 'nav', 'aria-current': S.page === p ? 'page' : 'false', onclick: () => go(p) },
-          label, p === 'faults' && faults ? h('span', { class: 'count' }, String(faults)) : null)),
-    ]),
-    S.mode === 'remote'
-      ? h('div', { class: 'rail-foot remote' },
-          h('span', { class: 'led ok' }),
-          h('div', {}, h('b', {}, 'Remote car'), h('small', {}, S.remoteAccess === 'tests' ? 'Read + tests, each approved by the owner' : 'Read only (set by the owner)')))
-      : h('div', { class: `rail-foot ${service ? 'unlocked' : ''}` },
-          h('span', { class: `led ${service ? 'warn' : 'ok'}` }),
-          h('div', {}, h('b', {}, service ? 'Tests & resets unlocked' : 'Read-only mode'), h('small', {}, 'Coding blocked, except the gauge curve'))),
-    S.share ? h('div', { class: 'rail-foot sharing' }, h('span', { class: 'led live' }), h('div', {}, h('b', {}, 'Car shared'), h('small', {}, S.share.access === 'read' ? 'Helper: read only' : 'Helper: read + tests'))) : null,
+    search,
+    ...NAV.map((g) => {
+      const items = g.items.filter(hit);
+      if (!items.length) return null;
+      return h('div', { class: 'nav-group', style: `--g: ${g.color}` },
+        h('div', { class: 'rail-sep' }, g.title, g.note ? h('small', {}, `· ${g.note}`) : null),
+        ...items.map((it) => h('button', { class: 'nav', 'aria-current': it.page && S.page === it.page ? 'page' : 'false', onclick: () => { navQuery = ''; if (it.page) go(it.page); else it.action?.(); } },
+          icon(it.icon), h('span', { class: 'nav-l' }, it.label),
+          it.page === 'faults' && faults ? h('span', { class: 'count' }, String(faults)) : null,
+          it.badge === 'new' ? h('span', { class: 'nav-new' }, 'NEW') : null,
+          it.lock ? h('span', { class: 'nav-lock', title: 'Writes to the car, with a backup first' }, icon('lock', 12)) : null)));
+    }),
+    q && !NAV.some((g) => g.items.some(hit)) ? h('p', { class: 'nav-none' }, 'No screen matches.') : null,
+    h('div', { class: 'rail-bottom' },
+      carCard,
+      S.mode === 'remote'
+        ? h('div', { class: 'rail-foot remote' },
+            h('span', { class: 'led ok' }),
+            h('div', {}, h('b', {}, 'Remote car'), h('small', {}, S.remoteAccess === 'tests' ? 'Read + tests, each approved by the owner' : 'Read only (set by the owner)')))
+        : h('div', { class: `rail-foot ${service ? 'unlocked' : ''}` },
+            h('span', { class: `led ${service ? 'warn' : 'ok'}` }),
+            h('div', {}, h('b', {}, service ? 'Tests & resets unlocked' : 'Read-only mode'), h('small', {}, 'Coding only with backup and verify'))),
+      S.share ? h('div', { class: 'rail-foot sharing' }, h('span', { class: 'led live' }), h('div', {}, h('b', {}, 'Car shared'), h('small', {}, S.share.access === 'read' ? 'Helper: read only' : 'Helper: read + tests'))) : null),
   ]));
 }
 
@@ -1151,6 +1203,7 @@ function go(p: Page) {
   if (p !== 'logger') stopLogger();
   if (p !== 'checks') stopChecks();
   if (p !== 'telemetry') stopTelemetry();
+  if (p !== 'eco') stopEco();
   if (MODULE_PAGES.includes(p) && !S.selected) S.selected = foundModules()[0]?.group ?? null;
   S.page = p;
   renderRail();
@@ -1191,6 +1244,7 @@ function renderMain() {
   const banner = renderHint() ?? renderRemoteBanner() ?? renderElmBanner();
   const put = (xs: (Node | null)[]) => main.replaceChildren(...nodes([banner, ...xs]));
   if (S.page === 'telemetry') return put(renderTelemetry(ctx));
+  if (S.page === 'eco') return put(renderEco(ctx));
   if (S.page === 'overview') return put(renderOverview());
   if (S.page === 'service') return put(renderService(ctx));
   if (S.page === 'coding') return put(renderCoding(ctx));
@@ -1574,6 +1628,7 @@ const ctx: PageCtx = {
     S.busy = b;
   },
   carTitle,
+  carId,
   log,
   rerender: () => {
     if (S.session) renderAll();

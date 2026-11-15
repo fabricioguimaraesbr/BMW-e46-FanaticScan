@@ -1,6 +1,7 @@
 // What the extra screens (Garage, Data Logger, Service) need from the main app.
 
 import type { Availability, Dtc, JobListEntry, ScanEntry, Session } from '../core/api/DiagSession';
+import type { CarId } from '../core/api/carid';
 import type { ModuleDef } from '../core/api/modules';
 
 export interface ModInfo {
@@ -31,6 +32,8 @@ export interface PageCtx {
   busy(): boolean;
   setBusy(b: string): void;
   carTitle(): string;
+  /** which E46 this is: DME family, engine, model, gearbox */
+  carId(): CarId;
   log(cls: string, text: string): void;
   rerender(): void;
   /** opens Live Data of a found module (by its short name, e.g. 'DME') */
