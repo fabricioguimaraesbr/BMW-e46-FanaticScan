@@ -114,9 +114,34 @@ function dial(kind: 'tach' | 'speed') {
   const marks = sv('svg', { viewBox: '0 0 400 400', class: 'tm-dlayer tm-marks', 'aria-hidden': 'true' });
   if (red !== undefined) marks.append(sv('path', { d: arc(200, 200, 171, A0 + (SW * red) / max, A0 + SW), class: 'tm-redzone' }));
   marks.append(sv('path', { d: mi, class: 'tm-mk minor' }), sv('path', { d: ma, class: 'tm-mk major' }), sv('path', { d: rt, class: 'tm-mk major red' }));
+  // acrylic needle (like the originals): translucent red-orange body lit from the hub, darker at the tail and
+  // brighter towards the tip, a light-pipe core inside, lit edges and a thin specular line on the top face
+  const gid = `tmn-${kind}`;
+  const stop = (offset: string, color: string, opacity = 1) => sv('stop', { offset, 'stop-color': color, 'stop-opacity': String(opacity) });
+  const lin = (id: string, ...stops: SVGElement[]) => sv('linearGradient', { id, gradientUnits: 'userSpaceOnUse', x1: '166', y1: '200', x2: '348', y2: '200' }, ...stops);
+  const defs = sv('defs', {},
+    lin(`${gid}-body`, stop('0', '#3a0a02', 0.95), stop('0.2', '#8f2306', 0.9), stop('0.32', '#d8380a', 0.86), stop('0.75', '#ff4d12', 0.82), stop('1', '#ff7a32', 0.9)),
+    lin(`${gid}-core`, stop('0', '#ffb07a', 0), stop('0.3', '#ffb07a', 0.35), stop('0.85', '#ffe0c2', 0.9), stop('1', '#fff2e4', 1)),
+    lin(`${gid}-edge`, stop('0', '#ff9a66', 0), stop('0.35', '#ffb88f', 0.55), stop('1', '#ffd9bf', 0.8)),
+  );
+  const blade = '156,195.4 200,194.4 344,197.3 348,198.7 348,201.3 344,202.7 200,205.6 156,204.6';
+  const core = '204,198.9 343,199.3 346,200 343,200.7 204,201.1';
+  // tach only: the needle "lights up" towards the red line (see rpmHeat), like the E38/E39 clusters
+  const hot = tach
+    ? [
+        lin(`${gid}-hot`, stop('0', '#ff7a1a', 0), stop('0.3', '#ff8c1e', 0.85), stop('0.8', '#ffb33a', 1), stop('1', '#ffd45e', 1)),
+        lin(`${gid}-hotcore`, stop('0', '#fff1a8', 0), stop('0.35', '#fff1a8', 0.8), stop('1', '#fffbe0', 1)),
+      ]
+    : [];
+  hot.forEach((g) => defs.append(g));
   const needle = sv('g', { class: 'tm-needle' },
-    sv('polygon', { points: '166,196.6 200,192.2 346,199.4 346,200.6 200,207.8 166,203.4', class: 'tm-nbody' }),
-    sv('polygon', { points: '166,196.6 200,192.2 346,199.4 346,200 200,200 166,200', class: 'tm-nlight' })) as SVGGElement;
+    defs,
+    sv('polygon', { points: blade, class: 'tm-nbody', fill: `url(#${gid}-body)`, stroke: `url(#${gid}-edge)` }),
+    ...(tach ? [sv('polygon', { points: blade, class: 'tm-nhot', fill: `url(#${gid}-hot)` })] : []),
+    sv('polygon', { points: core, class: 'tm-ncore', fill: `url(#${gid}-core)` }),
+    ...(tach ? [sv('polygon', { points: '204,198.3 343,198.9 346.5,200 343,201.1 204,201.7', class: 'tm-nhot', fill: `url(#${gid}-hotcore)` })] : []),
+    sv('polyline', { points: '200,194.8 344,197.6', class: 'tm-nspec' }),
+    sv('polygon', { points: '156,195.4 200,194.4 200,205.6 156,204.6', class: 'tm-ntail' })) as SVGGElement;
   needle.style.transform = `rotate(${A0}deg)`;
   const nlayer = sv('svg', { viewBox: '0 0 400 400', class: 'tm-dlayer tm-nlayer', 'aria-hidden': 'true' }, needle) as SVGSVGElement;
   const text = h('span', { class: 'tm-digital' }, '—');
@@ -285,10 +310,15 @@ function toggleRec(ctx: PageCtx) {
 }
 
 // ------------------------------------------------------------------ updating the screen
+/** 0 up to ~3000 rpm, 1 at the red line: how lit the tach needle is. */
+function rpmHeat(rpm: number) {
+  return Math.pow(clamp01((rpm - 3000) / 3800), 1.5);
+}
+/** Light around the tach needle: tight and warm, like light leaking from lit acrylic (no wide blur). */
 function rpmGlow(rpm: number) {
-  const e = Math.pow(clamp01(rpm / RPM_MAX), 2.2);
-  const a = 0.12 + 0.88 * e;
-  return `drop-shadow(0 0 ${(1 + 9 * e).toFixed(1)}px rgba(255,70,0,${a.toFixed(2)})) drop-shadow(0 0 ${(2 + 26 * e).toFixed(1)}px rgba(255,70,0,${(a * 0.8).toFixed(2)})) drop-shadow(0 2px 3px rgba(0,0,0,0.8))`;
+  const e = rpmHeat(rpm);
+  const a = 0.35 + 0.6 * e;
+  return `drop-shadow(0 0 ${(1.2 + 3 * e).toFixed(1)}px rgba(255,${Math.round(90 + 80 * e)},20,${a.toFixed(2)})) drop-shadow(0 0 ${(2 + 9 * e).toFixed(1)}px rgba(255,90,0,${(0.5 * e).toFixed(2)})) drop-shadow(2px 4px 2.5px rgba(0,0,0,0.75))`;
 }
 function setTile(t: { box: HTMLElement; value: HTMLElement }, text: string, color: string, bad: boolean, dim = false) {
   t.value.firstChild!.textContent = text;
@@ -326,6 +356,7 @@ function update() {
   const ra = A0 + SW * clamp01(rpm / RPM_MAX), sa = A0 + SW * clamp01(spd / SPEED_MAX);
   r.tachNeedle.style.transform = `rotate(${ra.toFixed(1)}deg)`;
   r.tachLayer.style.filter = rpmGlow(rpm);
+  r.tachLayer.style.setProperty('--heat', rpmHeat(rpm).toFixed(3));
   r.tachText.textContent = v.rpm === undefined ? '—' : String(Math.round(v.rpm / 10) * 10);
   r.spdNeedle.style.transform = `rotate(${sa.toFixed(1)}deg)`;
   r.spdText.textContent = v.speed === undefined ? '—' : String(Math.round(v.speed));

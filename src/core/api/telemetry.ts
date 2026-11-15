@@ -117,12 +117,17 @@ const truthy = (v: Value | undefined) => {
   return /^(1|ein|an|on|aktiv|active|ja|yes|true|sport)/i.test(String(v.value).trim());
 };
 
-/** Gear from the EGS: a number (1–5), or a text such as "3", "Gang 3", "R", "N". */
+/**
+ * Gear from the EGS: a number, or a text such as "3", "Gang: 1m", "R", "N".
+ * E46 automatics have 5 gears; the GS8.60.x code table (UW_GANG) has 6 = "1m" (first gear held in manual)
+ * and 7 = R, so a 6 is first gear, not a sixth.
+ */
 export function parseGear(v: Value | undefined): string | undefined {
   if (!v) return undefined;
   if (typeof v.value === 'number') {
     if (!Number.isFinite(v.value)) return undefined;
-    return v.value <= 0 ? 'N' : String(Math.round(v.value));
+    const g = Math.round(v.value);
+    return g <= 0 ? 'N' : g === 6 ? '1' : g === 7 ? 'R' : g > 7 ? undefined : String(g);
   }
   const t = String(v.value).toUpperCase();
   const d = t.match(/([1-6])/);
@@ -154,7 +159,9 @@ export function snapshot(f: Frame): Snapshot {
   }
   const s: Snapshot = { v, used };
   // gear and selector lever (gearbox)
-  const gearV = textOf(f.EGS, /^GANG$/) ?? textOf(f.EGS, /^(AKT_)?GANG|^GANG_/, /SOLL|ZIEL|ANZEIGE_SOLL/);
+  // STAT_GANG and STAT_GANG_TEXT both have the base name GANG: the text ("1m", "R") first
+  const gangs = f.EGS.filter((x) => baseKey(x.key) === 'GANG');
+  const gearV = gangs.find((x) => typeof x.value === 'string' && parseGear(x) !== undefined) ?? gangs[0] ?? textOf(f.EGS, /^(AKT_)?GANG|^GANG_/, /SOLL|ZIEL|ANZEIGE_SOLL|EINLEGEN/);
   s.gear = parseGear(gearV);
   const selV = textOf(f.EGS, /WAEHLHEBEL|FAHRSTUFE|POSITION_WH|^WH_POS/);
   const ps = parseSelector(selV);

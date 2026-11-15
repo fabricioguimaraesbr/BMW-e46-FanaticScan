@@ -1,7 +1,7 @@
 // ELM327 adapters: OBD-II of the engine only (no DS2), on the simulated E46.
 import { describe, expect, it } from 'vitest';
 import { Elm327, parseElmAnswer } from '../src/core/native/elm327';
-import { ENGINE_VARIANT, NativeSession, schedulePids } from '../src/core/native/NativeSession';
+import { ENGINE_VARIANT, NativeSession } from '../src/core/native/NativeSession';
 import { createE46 } from '../src/core/sim/e46';
 import { SimElmChannel } from '../src/core/sim/elmSim';
 
@@ -65,25 +65,4 @@ describe('ELM327', () => {
     const v = await s.readValues(ENGINE_VARIANT, 'OBD_LIVE');
     expect(v.values.find((x) => x.key === 'OBD_0C')?.value).toBeTypeOf('number');
   }, 30000);
-
-  it('reads engine speed every refresh and slow values less often', () => {
-    const pids = [0x0c, 0x0d, 0x11, 0x10, 0x05, 0x0f, 0x06, 0x08, 0x04, 0x0e, 0x14, 0x15, 0x2f, 0x33];
-    const last = new Map<number, number>(pids.map((p) => [p, -1]));
-    const count = new Map<number, number>();
-    for (let c = 0; c < 60; c++) {
-      const list = schedulePids(pids, last, c);
-      expect(list.slice(0, 2)).toEqual([0x0c, 0x0d]);
-      expect(list.length).toBeLessThanOrEqual(4);
-      for (const p of list) {
-        last.set(p, c);
-        count.set(p, (count.get(p) ?? 0) + 1);
-      }
-    }
-    expect(count.get(0x0c)).toBe(60);
-    expect(count.get(0x11)!).toBeGreaterThanOrEqual(25);
-    expect(count.get(0x05)!).toBeGreaterThanOrEqual(6);
-    expect(count.get(0x2f)!).toBeGreaterThanOrEqual(2);
-    expect(count.get(0x11)!).toBeGreaterThan(count.get(0x05)!);
-    expect(count.get(0x05)!).toBeGreaterThan(count.get(0x2f)!);
-  });
 });

@@ -74,6 +74,16 @@ describe('telemetry values', () => {
     expect(parseGear(v('X', 'Gang 3'))).toBe('3');
     expect(parseGear(v('X', 'R'))).toBe('R');
   });
+  it('reads first gear held in manual (GS8.60.x code 6 = "1m") as 1, not 6', () => {
+    expect(parseGear(v('STAT_GANG_WERT', 6))).toBe('1');
+    expect(parseGear(v('STAT_GANG_WERT', 7))).toBe('R');
+    expect(parseGear(v('STAT_GANG_WERT', 3))).toBe('3');
+    const manual = (extra: ReturnType<typeof v>[]) =>
+      snapshot({ DME, EGS: [...EGS.filter((x) => !/GANG|WAEHLHEBEL/.test(x.key)), v('STAT_WAEHLHEBEL_POSITION_TEXT', 'D'), v('STAT_SPORT_TASTER_EIN', 1), ...extra] });
+    expect(manual([v('STAT_GANG_WERT', 6)]).gear).toBe('1');
+    expect(manual([v('STAT_GANG_WERT', 6), v('STAT_GANG_TEXT', 'Gang: 1m')]).gear).toBe('1');
+    expect(manual([v('STAT_GANG_TEXT', 'Gang: 2'), v('STAT_GANG_WERT', 2)]).gear).toBe('2');
+  });
   it('flags values outside their range and formats them', () => {
     expect(isBad('ect', 115)).toBe(true);
     expect(isBad('ect', 95)).toBe(false);
