@@ -114,32 +114,31 @@ function dial(kind: 'tach' | 'speed') {
   const marks = sv('svg', { viewBox: '0 0 400 400', class: 'tm-dlayer tm-marks', 'aria-hidden': 'true' });
   if (red !== undefined) marks.append(sv('path', { d: arc(200, 200, 171, A0 + (SW * red) / max, A0 + SW), class: 'tm-redzone' }));
   marks.append(sv('path', { d: mi, class: 'tm-mk minor' }), sv('path', { d: ma, class: 'tm-mk major' }), sv('path', { d: rt, class: 'tm-mk major red' }));
-  // acrylic needle (like the originals): translucent red-orange body lit from the hub, darker at the tail and
-  // brighter towards the tip, a light-pipe core inside, lit edges and a thin specular line on the top face
+  // acrylic needle (like the originals): one translucent red-orange piece lit from the hub, darker at the tail and
+  // brighter towards the tip, lit edges and a thin specular line on the top face
   const gid = `tmn-${kind}`;
   const stop = (offset: string, color: string, opacity = 1) => sv('stop', { offset, 'stop-color': color, 'stop-opacity': String(opacity) });
   const lin = (id: string, ...stops: SVGElement[]) => sv('linearGradient', { id, gradientUnits: 'userSpaceOnUse', x1: '166', y1: '200', x2: '348', y2: '200' }, ...stops);
   const defs = sv('defs', {},
     lin(`${gid}-body`, stop('0', '#3a0a02', 0.95), stop('0.2', '#8f2306', 0.9), stop('0.32', '#d8380a', 0.86), stop('0.75', '#ff4d12', 0.82), stop('1', '#ff7a32', 0.9)),
-    lin(`${gid}-core`, stop('0', '#ffb07a', 0), stop('0.3', '#ffb07a', 0.35), stop('0.85', '#ffe0c2', 0.9), stop('1', '#fff2e4', 1)),
     lin(`${gid}-edge`, stop('0', '#ff9a66', 0), stop('0.35', '#ffb88f', 0.55), stop('1', '#ffd9bf', 0.8)),
   );
   const blade = '156,195.4 200,194.4 344,197.3 348,198.7 348,201.3 344,202.7 200,205.6 156,204.6';
-  const core = '204,198.9 343,199.3 346,200 343,200.7 204,201.1';
   // tach only: the needle "lights up" towards the red line (see rpmHeat), like the E38/E39 clusters
   const hot = tach
     ? [
-        lin(`${gid}-hot`, stop('0', '#ff7a1a', 0), stop('0.3', '#ff8c1e', 0.85), stop('0.8', '#ffb33a', 1), stop('1', '#ffd45e', 1)),
-        lin(`${gid}-hotcore`, stop('0', '#fff1a8', 0), stop('0.35', '#fff1a8', 0.8), stop('1', '#fffbe0', 1)),
+        lin(`${gid}-hot`, stop('0', '#ff400c', 0.2), stop('0.3', '#ff5a14', 1), stop('0.8', '#ff7a26', 1), stop('1', '#ff9a40', 1)),
       ]
     : [];
   hot.forEach((g) => defs.append(g));
+  if (tach)
+    defs.append(sv('filter', { id: `${gid}-blur`, x: '-30%', y: '-300%', width: '160%', height: '700%' }, sv('feGaussianBlur', { stdDeviation: '7' })));
   const needle = sv('g', { class: 'tm-needle' },
     defs,
+    // light thrown on the face by the lit acrylic near the red line
+    ...(tach ? [sv('polygon', { points: '170,193 345,195 352,200 345,205 170,207', class: 'tm-nhalo', filter: `url(#${gid}-blur)` })] : []),
     sv('polygon', { points: blade, class: 'tm-nbody', fill: `url(#${gid}-body)`, stroke: `url(#${gid}-edge)` }),
     ...(tach ? [sv('polygon', { points: blade, class: 'tm-nhot', fill: `url(#${gid}-hot)` })] : []),
-    sv('polygon', { points: core, class: 'tm-ncore', fill: `url(#${gid}-core)` }),
-    ...(tach ? [sv('polygon', { points: '204,198.3 343,198.9 346.5,200 343,201.1 204,201.7', class: 'tm-nhot', fill: `url(#${gid}-hotcore)` })] : []),
     sv('polyline', { points: '200,194.8 344,197.6', class: 'tm-nspec' }),
     sv('polygon', { points: '156,195.4 200,194.4 200,205.6 156,204.6', class: 'tm-ntail' })) as SVGGElement;
   needle.style.transform = `rotate(${A0}deg)`;
@@ -317,8 +316,8 @@ function rpmHeat(rpm: number) {
 /** Light around the tach needle: tight and warm, like light leaking from lit acrylic (no wide blur). */
 function rpmGlow(rpm: number) {
   const e = rpmHeat(rpm);
-  const a = 0.35 + 0.6 * e;
-  return `drop-shadow(0 0 ${(1.2 + 3 * e).toFixed(1)}px rgba(255,${Math.round(90 + 80 * e)},20,${a.toFixed(2)})) drop-shadow(0 0 ${(2 + 9 * e).toFixed(1)}px rgba(255,90,0,${(0.5 * e).toFixed(2)})) drop-shadow(2px 4px 2.5px rgba(0,0,0,0.75))`;
+  // near the red line the lit acrylic throws a strong red halo on the face (E38/E39 cluster)
+  return `drop-shadow(0 0 ${(1.2 + 2.8 * e).toFixed(1)}px rgba(255,${Math.round(60 + 30 * e)},10,${(0.35 + 0.65 * e).toFixed(2)})) drop-shadow(0 0 ${(2 + 10 * e).toFixed(1)}px rgba(255,40,0,${e.toFixed(2)})) drop-shadow(0 0 ${(30 * e).toFixed(1)}px rgba(255,25,0,${e.toFixed(2)})) drop-shadow(2px 4px 2.5px rgba(0,0,0,0.75))`;
 }
 function setTile(t: { box: HTMLElement; value: HTMLElement }, text: string, color: string, bad: boolean, dim = false) {
   t.value.firstChild!.textContent = text;

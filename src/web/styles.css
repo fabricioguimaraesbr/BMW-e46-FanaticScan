@@ -1022,9 +1022,9 @@ svg.ck-chart .band-mid { fill: rgba(255, 255, 255, 0.05); }
 .tm-unit { font: 700 12px var(--sans); letter-spacing: 0.22em; color: #b8642a; margin-top: 4px; }
 .tm-needle { transform-origin: 200px 200px; transition: transform 0.22s linear; }
 .tm-nbody { stroke-width: 0.7; stroke-linejoin: round; }
-.tm-ncore { mix-blend-mode: screen; }
 .tm-nspec { fill: none; stroke: #fff; stroke-opacity: 0.45; stroke-width: 0.6; stroke-linecap: round; }
 .tm-ntail { fill: #000; opacity: 0.28; }
+.tm-nhalo { fill: #ff2a00; opacity: calc(var(--heat, 0) * 0.9); transition: opacity 0.22s linear; }
 .tm-nhot { opacity: var(--heat, 0); mix-blend-mode: screen; transition: opacity 0.22s linear; }
 /* acrylic: a little light around it and a real shadow on the face below, no blur over the marks */
 .tm-nlayer { filter: drop-shadow(0 0 1.5px rgba(255,90,10,0.45)) drop-shadow(2px 4px 2.5px rgba(0,0,0,0.75)); }
