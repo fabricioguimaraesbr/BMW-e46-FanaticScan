@@ -229,3 +229,12 @@ Os testes rodam o fluxo completo (interpretador + camada do cabo + carro simulad
 GPL-3.0. O interpretador segue a semântica documentada pelo projeto aberto [EdiabasLib](https://github.com/uholeschak/ediabaslib) (GPLv3), de Ulrich Holeschak. Várias melhorias da versão 1.2 (KWP2000\*/BMW-FAST na linha K, DTR como liberação de transmissão no K+DCAN, relatório de problema, Garage, gravação multi-módulo, procedimentos de serviço) vieram de ideias e notas técnicas do [BMWeb](https://github.com/dader34/BMWeb) (GPLv3), de dader34; o código daqui foi escrito para este projeto.
 
 As definições da calibração da DME (MS42/MS43) em `src/core/dme/defs.json` são geradas por `scripts/build-dme-defs.ts` a partir dos arquivos XDF do [MS4X Dev Team](https://github.com/ms4x-net) ([ms42](https://github.com/ms4x-net/ms42), [ms43](https://github.com/ms4x-net/ms43); GPL-3.0; documentação em [ms4x.net](https://www.ms4x.net)). O layout dos checksums da MS42/MS43 (CRC-16 e somas de 32 bits) segue a documentação de rudywolf, https://github.com/therudywolf/MS4X (documentos CC BY-SA 4.0); o código daqui foi escrito para este projeto e conferido contra as imagens de fábrica do ms4x-net. Nenhuma imagem de firmware faz parte deste repositório.
+
+## Versão web (Cloudflare)
+
+O app também roda hospedado, direto no Chrome/Edge (Windows, Mac, Android), sem baixar nada. É um Worker do Cloudflare só com arquivos estáticos (`wrangler.toml`, pasta `dist/`).
+
+- **Workers & Pages › Create › Import a repository** › `BMW-e46-FanaticScan`, ramo `main`. O nome do Worker precisa ser **`e46fanatics-scan`**, igual ao `wrangler.toml`.
+- **Build command:** `npm run build` · **Deploy command:** `npx wrangler deploy`.
+- Cada push na `main` publica de novo sozinho.
+- O site não leva arquivos da BMW: funciona em plug & play e cada pessoa pode carregar os próprios arquivos de módulos (pasta ou .zip) pela tela inicial.

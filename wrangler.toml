@@ -1,0 +1,12 @@
+# Cloudflare Worker só com arquivos estáticos: serve a versão web do app (dist/).
+# Workers Builds faz build + deploy sozinho a cada push na main:
+#   Build command:  npm run build
+#   Deploy command: npx wrangler deploy
+# O nome do Worker no painel precisa ser igual ao "name" abaixo.
+# Nenhum arquivo da BMW (.prg/.grp) vai para o site: quem usa carrega os próprios.
+name = "e46fanatics-scan"
+compatibility_date = "2026-10-01"
+
+[assets]
+directory = "./dist"
+not_found_handling = "single-page-application"
