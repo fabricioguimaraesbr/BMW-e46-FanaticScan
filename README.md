@@ -116,6 +116,17 @@ Quando o comando `zip` existe, o script também gera `release/E46Fanatics Scan.z
 - **Faixas de referência** (`src/core/api/reference.ts`) para o M54/MS43: corte a 6.500 rpm, VANOS 80–120 / 80–105 °KW e pulso de injeção ≈ 3,5–5 ms (documentação técnica BMW), termostato de mapa 100–110 °C carga parcial / 85–95 °C carga total. Valores marcados como aproximados são típicos de oficina. Faixas "at idle" só são verificadas em marcha lenta, motor quente e carro parado.
 - **Pause / Chart / Record CSV:** o gráfico mostra as 4 principais medições; o CSV grava todos os valores lidos.
 
+## AI Diagnosis (v1.12)
+
+Menu On the road → AI Diagnosis. Grava sozinha (ao abrir a tela) os valores que ajudam a achar defeitos e exporta o que uma IA (Claude, ChatGPT, Gemini…) precisa para analisar o carro, com a conta da própria pessoa. Somente leitura.
+
+- **Leitura enxuta** (`src/core/api/aidiag.ts`, `planChannels`): bloco da DME a cada ciclo; bloco do EGS ~4×/s; grupos lentos da DME (VANOS, adaptações da mistura, sondas, ignição, falha de combustão) em rodízio a cada ~4 s; velocidade das rodas do ABS a cada 5 s. Um grupo extra por ciclo, no máximo.
+- **Gravação dos últimos 60 min**, com cópia no IndexedDB (`src/web/aiStore.ts`): recarregar a página ou fechar o app não perde a gravação (restaurada até 6 h depois; carro com outra DME começa uma gravação nova).
+- **Memória de erros** de DME, EGS, ABS/DSC, EWS, airbag e painel (ou de todos os módulos, opção) no início e de novo ao exportar: novo / continua / apagado.
+- **Teste guiado** opcional: aquecimento, marcha lenta, marcha lenta com carga, cruzeiro, aceleração total, desaceleração, marcha lenta quente. Cada passo conta o tempo só enquanto a condição vale e avança sozinho; cada linha gravada leva o passo e a condição de condução (cold, idle, cruise, high_load, overrun, other).
+- **Alertas simples** ao vivo (temperatura, trims, marcha lenta, massa de ar, bateria, câmbio).
+- **Exportar** (`src/core/api/aiexport.ts`): `.zip` com `ANALYZE.md` (instruções para a IA, faixas de referência do carro detectado, o que cruzar, formato da resposta, responder no idioma de quem pergunta), `car.json` (VIN mascarado), `faults.csv`, `events.csv`, `summary.csv` (mín/p05/média/p95/máx por condição) e `session.csv` (uma linha por leitura do motor). Ou **um arquivo só** (`.md`) com instruções + carro + erros + linha do tempo + resumo, para anexar ou colar.
+
 ## Segurança: o que o programa faz no carro
 
 Toda função dos arquivos da BMW é classificada (`src/core/api/safety.ts`) e a regra é aplicada no núcleo do programa (`DiagSession.run`), antes de qualquer telegrama sair pelo cabo:
@@ -206,7 +217,7 @@ Os testes rodam o fluxo completo (interpretador + camada do cabo + carro simulad
 | `src/core/sim` | Simulador byte a byte do E46 (MS43, GS8.60.4, ASC MK20, painel KOMBI46 com EEPROM); MS45, MRS5 e KOMBI46R só nos testes |
 | `src/core/coding` | Curva do ponteiro de temperatura (`gaugeCurve.ts`) e acesso ao EEPROM do painel (`clusterEeprom.ts`) |
 | `src/core/remote` | Sessão remota: protocolo, regras do lado do carro (`RemoteHost`) e sessão do colega (`RemoteSession`) |
-| `src/core/api` | Sessão de diagnóstico, módulos do E46, tradução, Garage (`garage.ts`), relatório (`report.ts`), procedimentos (`service.ts`) |
+| `src/core/api` | Sessão de diagnóstico, módulos do E46, tradução, Garage (`garage.ts`), relatório (`report.ts`), procedimentos (`service.ts`), AI Diagnosis (`aidiag.ts`, `aiexport.ts`) |
 | `src/web` | Interface, Web Serial, armazenamento dos arquivos no navegador |
 | `scripts/` | Ferramentas de engenharia reversa: disassembler de jobs, sondas de resposta |
 

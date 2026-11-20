@@ -29,6 +29,7 @@ import { renderChecks, resetChecks, stopChecks } from './checksPage';
 import { renderLibrary } from './libraryPage';
 import { renderTelemetry, resetTelemetry, stopTelemetry } from './telemetryPage';
 import { renderEco, resetEco, stopEco } from './ecoPage';
+import { renderAiDiag, resetAiDiag, stopAiDiag } from './aiDiagPage';
 import { carLine, identifyCar } from '../core/api/carid';
 import { openTroubleshoot } from './troubleshoot';
 import { ShareState, approvalDialog, openRemoteDialog } from './remote';
@@ -56,7 +57,7 @@ import { confirmDialog, download, h, nodes, stamp, store } from './dom';
 
 // ------------------------------------------------------------------ state
 /** Sections of the side menu. Module pages (faults, live, functions) show the module tabs on top. */
-type Page = 'telemetry' | 'eco' | 'overview' | 'vehicle' | 'faults' | 'live' | 'functions' | 'checks' | 'service' | 'coding' | 'cooling' | 'logger' | 'garage' | 'library' | 'log';
+type Page = 'telemetry' | 'eco' | 'ai' | 'overview' | 'vehicle' | 'faults' | 'live' | 'functions' | 'checks' | 'service' | 'coding' | 'cooling' | 'logger' | 'garage' | 'library' | 'log';
 const MODULE_PAGES: Page[] = ['faults', 'live', 'functions'];
 interface ModState {
   scan?: ScanEntry;
@@ -359,6 +360,7 @@ async function disconnect() {
   resetLogger();
   resetTelemetry();
   resetEco();
+  resetAiDiag();
   resetService();
   S.session?.abort();
   if (S.session instanceof NativeSession) S.session.iso.stopKeepAlive();
@@ -1122,7 +1124,7 @@ interface NavItem { page?: Page; action?: () => void; label: string; icon: strin
 interface NavGroup { id: string; title: string; color: string; note?: string; items: NavItem[] }
 const ICONS: Record<string, string> = {
   home: 'M3 11l9-8 9 8M5 10v10h14V10', id: 'M4 5h16v14H4zM8 9h8M8 13h5', alert: 'M12 3l10 18H2zM12 10v5M12 18h.01',
-  road: 'M4 16a8 8 0 1 1 16 0M12 16l4-5', eco: 'M5 19c0-8 6-14 15-14c0 9-6 15-14 15M5 19l8-8', live: 'M3 12h4l3-8 4 16 3-8h4',
+  road: 'M4 16a8 8 0 1 1 16 0M12 16l4-5', ai: 'M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8zM18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9z', eco: 'M5 19c0-8 6-14 15-14c0 9-6 15-14 15M5 19l8-8', live: 'M3 12h4l3-8 4 16 3-8h4',
   rec: 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6', check: 'M9 6h11M9 12h11M9 18h11M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2',
   wrench: 'M15 4a5 5 0 0 0-1 6l-9 9 2 2 9-9a5 5 0 0 0 6-1l-3-1-1-3z', zap: 'M13 2L4 14h7l-1 8 9-12h-7z', needle: 'M4 18a8 8 0 0 1 16 0M12 18l-3-6',
   thermo: 'M12 3a2 2 0 0 0-2 2v9a4 4 0 1 0 4 0V5a2 2 0 0 0-2-2zM12 10v6', garage: 'M3 7h6l2 2h10v10H3z',
@@ -1132,7 +1134,7 @@ const ICONS: Record<string, string> = {
 };
 const NAV: NavGroup[] = [
   { id: 'car', title: 'Car', color: '#4290f6', items: [{ page: 'overview', label: 'Overview', icon: 'home', keys: 'modules battery mileage' }, { page: 'vehicle', label: 'Vehicle', icon: 'id', keys: 'vin dme engine gearbox model options paint' }, { page: 'faults', label: 'Faults', icon: 'alert', keys: 'errors dtc codes clear' }] },
-  { id: 'road', title: 'On the road', color: '#ffa033', items: [{ page: 'telemetry', label: 'Telemetry', icon: 'road', keys: 'dash head unit gauges cluster' }, { page: 'eco', label: 'ECO', icon: 'eco', badge: 'new', keys: 'fuel economy consumption km/l cut' }] },
+  { id: 'road', title: 'On the road', color: '#ffa033', items: [{ page: 'telemetry', label: 'Telemetry', icon: 'road', keys: 'dash head unit gauges cluster' }, { page: 'eco', label: 'ECO', icon: 'eco', keys: 'fuel economy consumption km/l cut' }, { page: 'ai', label: 'AI Diagnosis', icon: 'ai', badge: 'new', keys: 'ai claude chatgpt analyse analyze record export problem diagnosis test drive' }] },
   { id: 'data', title: 'Data', color: '#2fd3c0', items: [{ page: 'live', label: 'Live Data', icon: 'live', keys: 'values sensors' }, { page: 'logger', label: 'Data Logger', icon: 'rec', keys: 'record csv log' }] },
   { id: 'shop', title: 'Workshop', color: '#b36bff', items: [{ page: 'checks', label: 'Guided checks', icon: 'check', keys: 'thermostat vanos o2 lambda misfire' }, { page: 'service', label: 'Service', icon: 'wrench', keys: 'oil inspection reset' }, { page: 'functions', label: 'Tests & Functions', icon: 'zap', keys: 'actuator jobs' }] },
   { id: 'coding', title: 'Coding', color: '#e22619', note: 'writes, with backup', items: [{ page: 'coding', label: 'Gauge curve', icon: 'needle', lock: true, keys: 'cluster temperature needle buffer kombi' }, { page: 'cooling', label: 'Engine cooling', icon: 'thermo', lock: true, keys: 'thermostat map dme calibration' }] },
@@ -1204,6 +1206,7 @@ function go(p: Page) {
   if (p !== 'checks') stopChecks();
   if (p !== 'telemetry') stopTelemetry();
   if (p !== 'eco') stopEco();
+  if (p !== 'ai') stopAiDiag();
   if (MODULE_PAGES.includes(p) && !S.selected) S.selected = foundModules()[0]?.group ?? null;
   S.page = p;
   renderRail();
@@ -1245,6 +1248,7 @@ function renderMain() {
   const put = (xs: (Node | null)[]) => main.replaceChildren(...nodes([banner, ...xs]));
   if (S.page === 'telemetry') return put(renderTelemetry(ctx));
   if (S.page === 'eco') return put(renderEco(ctx));
+  if (S.page === 'ai') return put(renderAiDiag(ctx));
   if (S.page === 'overview') return put(renderOverview());
   if (S.page === 'service') return put(renderService(ctx));
   if (S.page === 'coding') return put(renderCoding(ctx));

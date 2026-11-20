@@ -57,8 +57,8 @@ export function promptDialog(title: string, text: string, value: string, action:
   });
 }
 
-export function download(name: string, data: string, type = 'text/plain') {
-  const a = h('a', { href: URL.createObjectURL(new Blob([data], { type })), download: name });
+export function download(name: string, data: string | Blob | Uint8Array<ArrayBuffer>, type = 'text/plain') {
+  const a = h('a', { href: URL.createObjectURL(data instanceof Blob ? data : new Blob([data], { type })), download: name });
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
